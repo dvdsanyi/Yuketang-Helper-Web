@@ -8,6 +8,8 @@ from typing import Callable, Dict, List, Optional, Any
 import requests
 import websocket
 
+from ai_provider import AIProvider, create_provider
+from config import get_active_ai_key
 from domains import TSINGHUA_DOMAIN
 from utils import _make_headers, get_user_info
 
@@ -121,7 +123,12 @@ class Lesson:
             proxies={"http": None, "https": None},
             timeout=10,
         )
-        result = json.loads(r.text)
+        try:
+            result = json.loads(r.text)
+        except (json.JSONDecodeError, TypeError):
+            result = {}
+        if not isinstance(result, dict):
+            result = {}
         self.on_event("problem", {
             "lesson": self.lessonname,
             "lessonid": self.lessonid,
@@ -182,7 +189,13 @@ class Lesson:
 
     def _get_problems_from_presentation(self, presentation_id: Any) -> List[dict]:
         data = self._get_ppt(presentation_id)
-        return [slide["problem"] for slide in data.get("slides", []) if "problem" in slide]
+        problems = []
+        for slide in data.get("slides", []):
+            if "problem" in slide:
+                problem = slide["problem"]
+                problem["_cover"] = slide.get("cover", "")
+                problems.append(problem)
+        return problems
 
     def _build_random_answers(self, problem: dict) -> list:
         problemtype = problem.get("problemType")
@@ -199,6 +212,36 @@ class Lesson:
             return random.sample(options, min(count, len(options)))
         return []
 
+    def _get_ai_provider(self) -> Optional[AIProvider]:
+        provider_name, api_key = get_active_ai_key()
+        return create_provider(provider_name, api_key)
+
+    def _build_ai_answers(self, problem: dict) -> list:
+        provider = self._get_ai_provider()
+        if provider is None:
+            logger.warning("AI provider not configured, falling back to random")
+            return self._build_random_answers(problem)
+
+        cover_url = problem.get("_cover", "")
+        if not cover_url:
+            logger.warning("No cover URL for problem %s, falling back to random", problem.get("problemId"))
+            return self._build_random_answers(problem)
+
+        problemtype = problem.get("problemType")
+        try:
+            if problemtype == 5:
+                text = provider.answer_short(cover_url)
+                return [text] if text else []
+            else:
+                options = [opt["key"] for opt in problem.get("options", [])]
+                result = provider.answer_choice(cover_url, options, problemtype)
+                return result if result else self._build_random_answers(problem)
+        except Exception as e:
+            logger.error("AI answering failed: %s, falling back to random", e)
+            if problemtype == 5:
+                return []
+            return self._build_random_answers(problem)
+
     def _start_answer_for_problem(self, problemid: Any, limit: int) -> None:
         for problem in self.problems_ls:
             if problem.get("problemId") == problemid:
@@ -208,7 +251,18 @@ class Lesson:
                 mode = self.course_config.get("type%d" % problemtype, "off")
                 if not mode or mode == "off":
                     return
-                answers = self._build_random_answers(problem)
+                if mode == "ai":
+                    answers = self._build_ai_answers(problem)
+                else:
+                    answers = self._build_random_answers(problem)
+                if not answers:
+                    self.on_event("problem", {
+                        "lesson": self.lessonname,
+                        "lessonid": self.lessonid,
+                        "problemid": problemid,
+                        "status": "no_answer",
+                    })
+                    return
                 threading.Thread(
                     target=self.answer_questions,
                     args=(problem["problemId"], problemtype, answers, limit),

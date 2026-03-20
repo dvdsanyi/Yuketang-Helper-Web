@@ -8,13 +8,14 @@ from typing import Optional
 
 import requests
 import websocket
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import event_log
 from config import (
     get_config, save_config, get_course_config, update_course_config,
+    get_ai_config, update_ai_config,
     DEFAULT_COURSE_CONFIG,
 )
 from monitor import Monitor
@@ -171,6 +172,15 @@ class CourseConfig(BaseModel):
     danmu_threshold: int = 3
     notification: NotificationSub = NotificationSub()
     voice_notification: NotificationSub = NotificationSub(enabled=False)
+
+
+class AIKeyEntry(BaseModel):
+    name: str
+    provider: str = "gemini"
+    key: str
+
+class AIActiveKey(BaseModel):
+    active_key: int
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +356,8 @@ async def ws_login(ws: WebSocket):
 
             if msg["type"] == "error":
                 break
+    except WebSocketDisconnect:
+        logger.info("Login WebSocket client disconnected")
     finally:
         wsapp._keep_running = False
         wsapp.close()
@@ -423,6 +435,65 @@ async def update_course_settings(course_id: str, body: CourseConfig):
 
 
 # ---------------------------------------------------------------------------
+# AI settings routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/ai/settings")
+async def get_ai_settings():
+    cfg = get_ai_config()
+    # Mask keys for security
+    masked_keys = []
+    for entry in cfg.get("keys", []):
+        raw = entry.get("key", "")
+        masked = raw[:4] + "****" + raw[-4:] if len(raw) > 8 else "****" if raw else ""
+        masked_keys.append({**entry, "key": masked})
+    return {"keys": masked_keys, "active_key": cfg.get("active_key", -1)}
+
+
+@app.post("/api/ai/keys")
+async def add_ai_key(body: AIKeyEntry):
+    cfg = get_ai_config()
+    keys = cfg.get("keys", [])
+    keys.append(body.model_dump())
+    # Auto-select if it's the first key
+    active = cfg.get("active_key", -1)
+    if active < 0:
+        active = 0
+    update_ai_config({"keys": keys, "active_key": active})
+    return {"ok": True, "index": len(keys) - 1}
+
+
+@app.delete("/api/ai/keys/{index}")
+async def delete_ai_key(index: int):
+    cfg = get_ai_config()
+    keys = cfg.get("keys", [])
+    if index < 0 or index >= len(keys):
+        return {"ok": False, "message": "Invalid index"}
+    keys.pop(index)
+    active = cfg.get("active_key", -1)
+    if active >= len(keys):
+        active = len(keys) - 1
+    elif active > index:
+        active -= 1
+    elif active == index:
+        active = 0 if keys else -1
+    update_ai_config({"keys": keys, "active_key": active})
+    return {"ok": True}
+
+
+@app.put("/api/ai/active")
+async def set_active_ai_key(body: AIActiveKey):
+    cfg = get_ai_config()
+    keys = cfg.get("keys", [])
+    idx = body.active_key
+    if idx < -1 or idx >= len(keys):
+        return {"ok": False, "message": "Invalid index"}
+    update_ai_config({"active_key": idx})
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Events WebSocket
 # ---------------------------------------------------------------------------
 
@@ -442,15 +513,20 @@ async def ws_events(ws: WebSocket):
     _subscribers.add(client_queue)
 
     async def heartbeat():
-        while True:
-            await asyncio.sleep(30)
-            await ws.send_json({"type": "heartbeat"})
+        try:
+            while True:
+                await asyncio.sleep(30)
+                await ws.send_json({"type": "heartbeat"})
+        except (WebSocketDisconnect, RuntimeError):
+            pass
 
     hb_task = asyncio.create_task(heartbeat())
     try:
         while True:
             event = await client_queue.get()
             await ws.send_json(event)
+    except (WebSocketDisconnect, RuntimeError):
+        logger.info("Events WebSocket client disconnected")
     finally:
         hb_task.cancel()
         _subscribers.discard(client_queue)

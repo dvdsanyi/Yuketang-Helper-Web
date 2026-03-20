@@ -22,6 +22,17 @@ interface CourseState extends CourseConfig {
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
 }
 
+interface AIKeyEntry {
+  name: string
+  provider: string
+  key: string
+}
+
+interface AISettings {
+  keys: AIKeyEntry[]
+  active_key: number
+}
+
 type CoursesMap = Record<string, CourseConfig>
 
 const DEFAULT_NOTIF: NotificationSub = {
@@ -107,18 +118,56 @@ export default function Settings() {
   const { t } = useTranslation()
   const [courses, setCourses] = useState<CourseState[]>([])
   const [loading, setLoading] = useState(true)
+  const [ai, setAi] = useState<AISettings>({ keys: [], active_key: -1 })
+  const [newKey, setNewKey] = useState<AIKeyEntry>({ name: '', provider: 'gemini', key: '' })
+  const [addingKey, setAddingKey] = useState(false)
+
+  const reloadAi = () =>
+    fetch('/api/ai/settings').then((r) => r.json()).then(setAi).catch(() => {})
 
   useEffect(() => {
     Promise.all([
       fetch('/api/courses/all').then((r) => r.json()),
       fetch('/api/courses/settings').then((r) => r.json()),
+      fetch('/api/ai/settings').then((r) => r.json()),
     ])
-      .then(([allCourses, settings]: [CourseItem[], CoursesMap]) => {
+      .then(([allCourses, settings, aiSettings]: [CourseItem[], CoursesMap, AISettings]) => {
         setCourses(buildCourseStates(allCourses, settings))
+        setAi(aiSettings)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const handleAddKey = async () => {
+    if (!newKey.name.trim() || !newKey.key.trim()) return
+    setAddingKey(true)
+    try {
+      const resp = await fetch('/api/ai/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newKey),
+      })
+      if (!resp.ok) throw new Error('Add failed')
+      setNewKey({ name: '', provider: 'gemini', key: '' })
+      await reloadAi()
+    } catch {}
+    setAddingKey(false)
+  }
+
+  const handleDeleteKey = async (index: number) => {
+    await fetch(`/api/ai/keys/${index}`, { method: 'DELETE' })
+    await reloadAi()
+  }
+
+  const handleSetActiveKey = async (index: number) => {
+    await fetch('/api/ai/active', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active_key: index }),
+    })
+    await reloadAi()
+  }
 
   const updateField = <K extends keyof CourseConfig>(
     courseId: string,
@@ -192,6 +241,86 @@ export default function Settings() {
     <div className="page">
       <h1 className="page-title">{t('settings.title')}</h1>
 
+      {/* AI Settings */}
+      <div className="card" style={{ marginBottom: '1.5rem' }}>
+        <div className="course-card-header">
+          <h3 className="course-card-title">{t('settings.aiSettings')}</h3>
+        </div>
+        <div className="course-card-body">
+          {/* Saved keys */}
+          {ai.keys.length > 0 && (
+            <div className="ai-key-list">
+              {ai.keys.map((entry, idx) => (
+                <div key={idx} className={`ai-key-item ${idx === ai.active_key ? 'ai-key-active' : ''}`}>
+                  <div className="ai-key-info">
+                    <span className="ai-key-name">{entry.name}</span>
+                    <span className="ai-key-provider">{entry.provider}</span>
+                    <span className="ai-key-masked">{entry.key}</span>
+                  </div>
+                  <div className="ai-key-actions">
+                    <button
+                      className={`btn btn-sm ${idx === ai.active_key ? 'btn-success' : 'btn-secondary'}`}
+                      onClick={() => handleSetActiveKey(idx)}
+                    >
+                      {idx === ai.active_key ? t('settings.inUse') : t('settings.use')}
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => handleDeleteKey(idx)}
+                    >
+                      {t('settings.delete')}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add new key */}
+          <div className="ai-add-key">
+            <div className="form-row">
+              <label className="form-label">{t('settings.keyName')}</label>
+              <input
+                type="text"
+                className="form-input"
+                value={newKey.name}
+                placeholder={t('settings.keyNamePlaceholder')}
+                onChange={(e) => setNewKey({ ...newKey, name: e.target.value })}
+              />
+            </div>
+            <div className="form-row">
+              <label className="form-label">{t('settings.aiProvider')}</label>
+              <select
+                className="form-select"
+                value={newKey.provider}
+                onChange={(e) => setNewKey({ ...newKey, provider: e.target.value })}
+              >
+                <option value="gemini">Gemini</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="form-label">{t('settings.apiKey')}</label>
+              <input
+                type="password"
+                className="form-input"
+                value={newKey.key}
+                placeholder={t('settings.apiKeyPlaceholder')}
+                onChange={(e) => setNewKey({ ...newKey, key: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="course-card-footer">
+          <button
+            className="btn btn-primary"
+            onClick={handleAddKey}
+            disabled={addingKey || !newKey.name.trim() || !newKey.key.trim()}
+          >
+            {addingKey ? t('settings.saving') : t('settings.addKey')}
+          </button>
+        </div>
+      </div>
+
       {courses.length === 0 ? (
         <div className="card">
           <p className="empty-message">{t('settings.noCourses')}</p>
@@ -216,7 +345,7 @@ export default function Settings() {
                     onChange={(e) => updateField(course.courseId, 'type1', e.target.value)}
                   >
                     <option value="random">{t('settings.random')}</option>
-                    <option value="ai" disabled>{t('settings.ai_reserved')}</option>
+                    <option value="ai">AI</option>
                     <option value="off">{t('settings.disabled')}</option>
                   </select>
                 </div>
@@ -230,7 +359,7 @@ export default function Settings() {
                     onChange={(e) => updateField(course.courseId, 'type2', e.target.value)}
                   >
                     <option value="random">{t('settings.random')}</option>
-                    <option value="ai" disabled>{t('settings.ai_reserved')}</option>
+                    <option value="ai">AI</option>
                     <option value="off">{t('settings.disabled')}</option>
                   </select>
                 </div>
@@ -262,7 +391,7 @@ export default function Settings() {
                     value={course.type5}
                     onChange={(e) => updateField(course.courseId, 'type5', e.target.value)}
                   >
-                    <option value="ai" disabled>{t('settings.ai_reserved')}</option>
+                    <option value="ai">AI</option>
                     <option value="off">{t('settings.disabled')}</option>
                   </select>
                 </div>

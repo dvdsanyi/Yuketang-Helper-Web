@@ -32,7 +32,12 @@ DEFAULT_COURSE_CONFIG: dict = {
     },
 }
 
-_EMPTY_CONFIG = {"sessionid": "", "user": {}, "course_list": [], "courses": {}}
+DEFAULT_AI_CONFIG: dict = {
+    "keys": [],       # [{"name": str, "provider": str, "key": str}, ...]
+    "active_key": -1,  # index into keys, -1 = none
+}
+
+_EMPTY_CONFIG = {"sessionid": "", "user": {}, "course_list": [], "courses": {}, "ai": dict(DEFAULT_AI_CONFIG)}
 
 
 def get_config() -> dict:
@@ -64,4 +69,46 @@ def update_course_config(course_id: str, data: dict) -> None:
     cfg = get_config()
     courses = cfg.setdefault("courses", {})
     courses.setdefault(str(course_id), {}).update(data)
+    save_config(cfg)
+
+
+def get_ai_config() -> dict:
+    cfg = get_config()
+    ai = cfg.get("ai", {})
+
+    # Migrate old single-key format
+    if "gemini_api_key" in ai:
+        old_key = ai.pop("gemini_api_key", "")
+        old_provider = ai.pop("provider", "gemini")
+        keys = ai.get("keys", [])
+        if old_key and not keys:
+            keys.append({"name": "Default", "provider": old_provider, "key": old_key})
+            ai["keys"] = keys
+            ai["active_key"] = 0
+        cfg["ai"] = ai
+        save_config(cfg)
+
+    merged = dict(DEFAULT_AI_CONFIG)
+    merged.update(ai)
+    # Ensure keys is always a list
+    if not isinstance(merged.get("keys"), list):
+        merged["keys"] = []
+    return merged
+
+
+def get_active_ai_key() -> tuple:
+    """Return (provider, api_key) for the currently active key, or ("", "")."""
+    ai = get_ai_config()
+    keys = ai.get("keys", [])
+    idx = ai.get("active_key", -1)
+    if idx < 0 or idx >= len(keys):
+        return ("", "")
+    entry = keys[idx]
+    return (entry.get("provider", ""), entry.get("key", ""))
+
+
+def update_ai_config(data: dict) -> None:
+    cfg = get_config()
+    ai = cfg.setdefault("ai", dict(DEFAULT_AI_CONFIG))
+    ai.update(data)
     save_config(cfg)
