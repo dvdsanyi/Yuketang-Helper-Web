@@ -8,6 +8,7 @@ node_modules/
 
 # Usage
 api_usage_example/
+note.md
 
 # Config & data
 store/
