@@ -56,7 +56,11 @@ class Monitor:
 
     def _run(self) -> None:
         while self._running:
-            lesson_list = get_on_lesson(self.sessionid)
+            try:
+                lesson_list = get_on_lesson(self.sessionid)
+            except Exception:
+                logger.exception("Failed to poll lessons")
+                lesson_list = []
             self._sync_lessons(lesson_list)
             for _ in range(POLL_INTERVAL):
                 if not self._running:
