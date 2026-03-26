@@ -206,6 +206,9 @@ export default function Dashboard() {
             problemid: m['problemid'],
           }))
           setEvents(historical.reverse()) // newest first
+          fetchAllCourses()
+          fetchLessons()
+          fetchCourseConfigs()
           return
         }
 

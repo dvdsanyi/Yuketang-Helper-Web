@@ -99,12 +99,11 @@ class Monitor:
                 with self._lock:
                     self._active_lessons[lesson_id] = lesson
 
-                if self._first_poll_done:
-                    self._emit("lesson_start", {
-                        "lesson": lesson.lessonname,
-                        "lessonid": lesson_id,
-                        "message": "Started monitoring: %s" % lesson.lessonname,
-                    })
+                self._emit("lesson_start", {
+                    "lesson": lesson.lessonname,
+                    "lessonid": lesson_id,
+                    "message": "Started monitoring: %s" % lesson.lessonname,
+                })
 
                 threading.Thread(
                     target=self._lesson_thread,
@@ -120,6 +119,11 @@ class Monitor:
                 lesson = self._active_lessons.pop(lid, None)
             if lesson:
                 lesson.stop_lesson()
+                self._emit("lesson_end", {
+                    "lesson": lesson.lessonname,
+                    "lessonid": lesson.lessonid,
+                    "message": "Lesson ended: %s" % lesson.lessonname,
+                })
 
         self._first_poll_done = True
 
