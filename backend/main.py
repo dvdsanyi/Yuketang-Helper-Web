@@ -366,6 +366,11 @@ async def get_all_courses_endpoint():
     ]
 
 
+@app.get("/api/courses/defaults")
+async def get_course_defaults():
+    return DEFAULT_COURSE_CONFIG
+
+
 @app.get("/api/courses/settings")
 async def get_all_course_settings():
     cfg = get_config()

@@ -59,10 +59,17 @@
     "to": "to",
     "danmuThreshold": "Send when repeated",
     "times": "times",
-    "save": "Save",
-    "saved": "Saved!",
-    "saving": "Saving...",
-    "noCourses": "No courses found."
+    "apply": "Apply",
+    "applied": "Applied!",
+    "applying": "Applying...",
+    "noCourses": "No courses found.",
+    "courseSettings": "Course Settings",
+    "quizModes": "Quiz Modes",
+    "timing": "Timing",
+    "danmu": "Danmu",
+    "notifications": "Notifications",
+    "applyToAll": "Apply to All",
+    "default": "Default"
   },
   "events": {
     "signin": "Sign-in",

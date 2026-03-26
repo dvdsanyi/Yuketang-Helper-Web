@@ -59,10 +59,17 @@
     "to": "至",
     "danmuThreshold": "重复次数触发弹幕",
     "times": "次",
-    "save": "保存",
-    "saved": "已保存！",
-    "saving": "保存中...",
-    "noCourses": "未找到课程。"
+    "apply": "应用",
+    "applied": "已应用！",
+    "applying": "应用中...",
+    "noCourses": "未找到课程。",
+    "courseSettings": "课程设置",
+    "quizModes": "答题模式",
+    "timing": "时间",
+    "danmu": "弹幕",
+    "notifications": "通知",
+    "applyToAll": "应用到全部",
+    "default": "恢复默认"
   },
   "events": {
     "signin": "签到",

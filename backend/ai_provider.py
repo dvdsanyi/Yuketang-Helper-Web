@@ -90,7 +90,7 @@ class GeminiProvider(AIProvider):
 
 
 _PROVIDERS = {
-    "gemini": GeminiProvider,
+    "google": GeminiProvider,
 }
 
 

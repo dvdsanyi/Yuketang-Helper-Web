@@ -533,10 +533,38 @@ button:disabled {
 }
 
 /* ===========================
-   Settings row card
+   Settings Sections & Groups
    =========================== */
-.settings-row {
-  display: block;
+.settings-section {
+  margin-bottom: 28px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 12px;
+}
+
+.settings-group {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-group:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settings-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
 }
 
 /* ===========================
@@ -675,9 +703,31 @@ button:disabled {
   background: var(--color-border);
 }
 
-.ai-add-key {
+/* AI add key – horizontal form */
+.ai-add-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   border-top: 1px solid var(--color-border);
-  padding-top: 12px;
+  padding-top: 14px;
+}
+
+.ai-add-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-add-fields .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-add-fields .form-select {
+  min-width: 110px;
+  flex-shrink: 0;
 }
 
 .form-input-number {
@@ -741,7 +791,12 @@ button:disabled {
   padding: 12px 20px 16px;
   border-top: 1px solid var(--color-border);
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-spacer {
+  flex: 1;
 }
 
 /* ===========================
@@ -838,5 +893,18 @@ button:disabled {
   .data-table th:nth-child(3),
   .data-table td:nth-child(3) {
     display: none;
+  }
+
+  .ai-add-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-add-fields {
+    flex-direction: column;
+  }
+
+  .ai-add-fields .form-select {
+    width: 100%;
   }
 }

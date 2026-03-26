@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { NotificationSub, CourseItem } from '../types'
 
@@ -35,31 +35,23 @@ interface AISettings {
 
 type CoursesMap = Record<string, CourseConfig>
 
-const DEFAULT_NOTIF: NotificationSub = {
-  enabled: true,
-  signin: true,
-  problem: true,
-  call: true,
-  danmu: false,
-}
-
-function buildCourseStates(allCourses: CourseItem[], settings: CoursesMap): CourseState[] {
+function buildCourseStates(allCourses: CourseItem[], settings: CoursesMap, defaults: CourseConfig): CourseState[] {
   return allCourses.map((c) => {
     const cfg = settings[c.classroom_id] ?? {} as Partial<CourseConfig>
     return {
       courseId: c.classroom_id,
       name: c.name,
-      type1: cfg.type1 ?? 'random',
-      type2: cfg.type2 ?? 'random',
-      type3: cfg.type3 ?? 'random',
-      type4: cfg.type4 ?? 'off',
-      type5: cfg.type5 ?? 'off',
-      answer_delay_min: cfg.answer_delay_min ?? 3,
-      answer_delay_max: cfg.answer_delay_max ?? 10,
-      auto_danmu: cfg.auto_danmu ?? true,
-      danmu_threshold: cfg.danmu_threshold ?? 3,
-      notification: { ...DEFAULT_NOTIF, ...cfg.notification },
-      voice_notification: { ...DEFAULT_NOTIF, ...cfg.voice_notification, enabled: cfg.voice_notification?.enabled ?? false },
+      type1: cfg.type1 ?? defaults.type1,
+      type2: cfg.type2 ?? defaults.type2,
+      type3: cfg.type3 ?? defaults.type3,
+      type4: cfg.type4 ?? defaults.type4,
+      type5: cfg.type5 ?? defaults.type5,
+      answer_delay_min: cfg.answer_delay_min ?? defaults.answer_delay_min,
+      answer_delay_max: cfg.answer_delay_max ?? defaults.answer_delay_max,
+      auto_danmu: cfg.auto_danmu ?? defaults.auto_danmu,
+      danmu_threshold: cfg.danmu_threshold ?? defaults.danmu_threshold,
+      notification: { ...defaults.notification, ...cfg.notification },
+      voice_notification: { ...defaults.voice_notification, ...cfg.voice_notification },
       saveStatus: 'idle',
     }
   })
@@ -114,13 +106,39 @@ function NotificationSection({
   )
 }
 
+function QuizModeSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+}) {
+  return (
+    <div className="form-row">
+      <label className="form-label">{label}</label>
+      <select className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 export default function Settings() {
   const { t } = useTranslation()
   const [courses, setCourses] = useState<CourseState[]>([])
   const [loading, setLoading] = useState(true)
   const [ai, setAi] = useState<AISettings>({ keys: [], active_key: -1 })
-  const [newKey, setNewKey] = useState<AIKeyEntry>({ name: '', provider: 'gemini', key: '' })
+  const [newKey, setNewKey] = useState<AIKeyEntry>({ name: '', provider: 'google', key: '' })
   const [addingKey, setAddingKey] = useState(false)
+  const [appliedAllFrom, setAppliedAllFrom] = useState<string | null>(null)
+  const [defaults, setDefaults] = useState<CourseConfig | null>(null)
+  const savedCoursesRef = useRef<Record<string, string>>({})
 
   const reloadAi = () =>
     fetch('/api/ai/settings').then((r) => r.json()).then(setAi).catch(() => {})
@@ -130,14 +148,29 @@ export default function Settings() {
       fetch('/api/courses/all').then((r) => r.json()),
       fetch('/api/courses/settings').then((r) => r.json()),
       fetch('/api/ai/settings').then((r) => r.json()),
+      fetch('/api/courses/defaults').then((r) => r.json()),
     ])
-      .then(([allCourses, settings, aiSettings]: [CourseItem[], CoursesMap, AISettings]) => {
-        setCourses(buildCourseStates(allCourses, settings))
+      .then(([allCourses, settings, aiSettings, defs]: [CourseItem[], CoursesMap, AISettings, CourseConfig]) => {
+        setDefaults(defs)
+        const built = buildCourseStates(allCourses, settings, defs)
+        setCourses(built)
+        const snap: Record<string, string> = {}
+        for (const c of built) snap[c.courseId] = courseFingerprint(c)
+        savedCoursesRef.current = snap
         setAi(aiSettings)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  function courseFingerprint(c: CourseState): string {
+    const { courseId: _, name: __, saveStatus: ___, ...rest } = c
+    return JSON.stringify(rest)
+  }
+
+  function isDirty(course: CourseState): boolean {
+    return courseFingerprint(course) !== savedCoursesRef.current[course.courseId]
+  }
 
   const handleAddKey = async () => {
     if (!newKey.name.trim() || !newKey.key.trim()) return
@@ -149,7 +182,7 @@ export default function Settings() {
         body: JSON.stringify(newKey),
       })
       if (!resp.ok) throw new Error('Add failed')
-      setNewKey({ name: '', provider: 'gemini', key: '' })
+      setNewKey({ name: '', provider: 'google', key: '' })
       await reloadAi()
     } catch {}
     setAddingKey(false)
@@ -207,6 +240,7 @@ export default function Settings() {
         }),
       })
       if (!resp.ok) throw new Error('Save failed')
+      savedCoursesRef.current[course.courseId] = courseFingerprint(course)
       setCourses((prev) =>
         prev.map((c) =>
           c.courseId === course.courseId ? { ...c, saveStatus: 'saved' } : c
@@ -228,6 +262,80 @@ export default function Settings() {
     }
   }
 
+  const applyToAll = async (source: CourseState) => {
+    const payload = {
+      type1: source.type1,
+      type2: source.type2,
+      type3: source.type3,
+      type4: source.type4,
+      type5: source.type5,
+      answer_delay_min: source.answer_delay_min,
+      answer_delay_max: source.answer_delay_max,
+      auto_danmu: source.auto_danmu,
+      danmu_threshold: source.danmu_threshold,
+      notification: source.notification,
+      voice_notification: source.voice_notification,
+    }
+    const results = await Promise.all(
+      courses.map((c) =>
+        fetch(`/api/courses/settings/${c.courseId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then((r) => r.ok)
+      )
+    )
+    if (results.every(Boolean)) {
+      setCourses((prev) => {
+        const updated = prev.map((c) => ({
+          ...c,
+          ...payload,
+          notification: { ...payload.notification },
+          voice_notification: { ...payload.voice_notification },
+          saveStatus: 'idle' as const,
+        }))
+        for (const c of updated) savedCoursesRef.current[c.courseId] = courseFingerprint(c)
+        return updated
+      })
+      setAppliedAllFrom(source.courseId)
+      setTimeout(() => setAppliedAllFrom(null), 2000)
+    }
+  }
+
+  const resetToDefault = (courseId: string) => {
+    if (!defaults) return
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.courseId === courseId
+          ? {
+              ...c,
+              type1: defaults.type1,
+              type2: defaults.type2,
+              type3: defaults.type3,
+              type4: defaults.type4,
+              type5: defaults.type5,
+              answer_delay_min: defaults.answer_delay_min,
+              answer_delay_max: defaults.answer_delay_max,
+              auto_danmu: defaults.auto_danmu,
+              danmu_threshold: defaults.danmu_threshold,
+              notification: { ...defaults.notification },
+              voice_notification: { ...defaults.voice_notification },
+              saveStatus: 'idle',
+            }
+          : c
+      )
+    )
+  }
+
+  const modeOptions = (hasAi: boolean) => {
+    const opts = [
+      { value: 'random', label: t('settings.random') },
+      { value: 'off', label: t('settings.disabled') },
+    ]
+    if (hasAi) opts.splice(1, 0, { value: 'ai', label: 'AI' })
+    return opts
+  }
+
   if (loading) {
     return (
       <div className="page">
@@ -242,12 +350,10 @@ export default function Settings() {
       <h1 className="page-title">{t('settings.title')}</h1>
 
       {/* AI Settings */}
-      <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div className="course-card-header">
-          <h3 className="course-card-title">{t('settings.aiSettings')}</h3>
-        </div>
-        <div className="course-card-body">
-          {/* Saved keys */}
+      <section className="settings-section">
+        <h2 className="settings-section-title">{t('settings.aiSettings')}</h2>
+
+        <div className="card">
           {ai.keys.length > 0 && (
             <div className="ai-key-list">
               {ai.keys.map((entry, idx) => (
@@ -276,10 +382,8 @@ export default function Settings() {
             </div>
           )}
 
-          {/* Add new key */}
-          <div className="ai-add-key">
-            <div className="form-row">
-              <label className="form-label">{t('settings.keyName')}</label>
+          <div className="ai-add-form">
+            <div className="ai-add-fields">
               <input
                 type="text"
                 className="form-input"
@@ -287,19 +391,13 @@ export default function Settings() {
                 placeholder={t('settings.keyNamePlaceholder')}
                 onChange={(e) => setNewKey({ ...newKey, name: e.target.value })}
               />
-            </div>
-            <div className="form-row">
-              <label className="form-label">{t('settings.aiProvider')}</label>
               <select
                 className="form-select"
                 value={newKey.provider}
                 onChange={(e) => setNewKey({ ...newKey, provider: e.target.value })}
               >
-                <option value="gemini">Gemini</option>
+                <option value="google">Google</option>
               </select>
-            </div>
-            <div className="form-row">
-              <label className="form-label">{t('settings.apiKey')}</label>
               <input
                 type="password"
                 className="form-input"
@@ -308,204 +406,204 @@ export default function Settings() {
                 onChange={(e) => setNewKey({ ...newKey, key: e.target.value })}
               />
             </div>
+            <button
+              className="btn btn-primary"
+              onClick={handleAddKey}
+              disabled={addingKey || !newKey.name.trim() || !newKey.key.trim()}
+            >
+              {addingKey ? t('settings.applying') : t('settings.addKey')}
+            </button>
           </div>
         </div>
-        <div className="course-card-footer">
-          <button
-            className="btn btn-primary"
-            onClick={handleAddKey}
-            disabled={addingKey || !newKey.name.trim() || !newKey.key.trim()}
-          >
-            {addingKey ? t('settings.saving') : t('settings.addKey')}
-          </button>
-        </div>
-      </div>
+      </section>
 
-      {courses.length === 0 ? (
-        <div className="card">
-          <p className="empty-message">{t('settings.noCourses')}</p>
-        </div>
-      ) : (
-        <div className="course-grid">
-          {courses.map((course) => (
-            <div key={course.courseId} className="course-card">
-              <div className="course-card-header">
-                <h3 className="course-card-title">
-                  {course.name || course.courseId}
-                </h3>
-              </div>
+      {/* Course Settings */}
+      <section className="settings-section">
+        <h2 className="settings-section-title">{t('settings.courseSettings')}</h2>
 
-              <div className="course-card-body">
-                {/* Type 1: Single Choice */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.type1')}</label>
-                  <select
-                    className="form-select"
-                    value={course.type1}
-                    onChange={(e) => updateField(course.courseId, 'type1', e.target.value)}
-                  >
-                    <option value="random">{t('settings.random')}</option>
-                    <option value="ai">AI</option>
-                    <option value="off">{t('settings.disabled')}</option>
-                  </select>
+        {courses.length === 0 ? (
+          <div className="card">
+            <p className="empty-message">{t('settings.noCourses')}</p>
+          </div>
+        ) : (
+          <div className="course-grid">
+            {courses.map((course) => (
+              <div key={course.courseId} className="course-card">
+                <div className="course-card-header">
+                  <h3 className="course-card-title">
+                    {course.name || course.courseId}
+                  </h3>
                 </div>
 
-                {/* Type 2: Multiple Choice */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.type2')}</label>
-                  <select
-                    className="form-select"
-                    value={course.type2}
-                    onChange={(e) => updateField(course.courseId, 'type2', e.target.value)}
-                  >
-                    <option value="random">{t('settings.random')}</option>
-                    <option value="ai">AI</option>
-                    <option value="off">{t('settings.disabled')}</option>
-                  </select>
-                </div>
-
-                {/* Type 3: Vote */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.type3')}</label>
-                  <select
-                    className="form-select"
-                    value={course.type3}
-                    onChange={(e) => updateField(course.courseId, 'type3', e.target.value)}
-                  >
-                    <option value="random">{t('settings.random')}</option>
-                    <option value="off">{t('settings.disabled')}</option>
-                  </select>
-                </div>
-
-                {/* Type 4: Fill-in-blank (reserved) */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.type4')}</label>
-                  <span className="badge badge-gray">{t('settings.reserved')}</span>
-                </div>
-
-                {/* Type 5: Short Answer */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.type5')}</label>
-                  <select
-                    className="form-select"
-                    value={course.type5}
-                    onChange={(e) => updateField(course.courseId, 'type5', e.target.value)}
-                  >
-                    <option value="ai">AI</option>
-                    <option value="off">{t('settings.disabled')}</option>
-                  </select>
-                </div>
-
-                {/* Answer Delay */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.answerDelay')}</label>
-                  <div className="input-with-unit">
-                    <input
-                      type="number"
-                      className="form-input-number"
-                      min={1}
-                      max={course.answer_delay_max - 1}
-                      value={course.answer_delay_min}
-                      onChange={(e) => {
-                        const val = Math.max(1, parseInt(e.target.value) || 1)
-                        updateField(course.courseId, 'answer_delay_min', val)
-                        if (val >= course.answer_delay_max) {
-                          updateField(course.courseId, 'answer_delay_max', val + 1)
-                        }
-                      }}
+                <div className="course-card-body">
+                  {/* Quiz Modes */}
+                  <div className="settings-group">
+                    <span className="settings-group-label">{t('settings.quizModes')}</span>
+                    <QuizModeSelect
+                      label={t('settings.type1')}
+                      value={course.type1}
+                      options={modeOptions(true)}
+                      onChange={(v) => updateField(course.courseId, 'type1', v)}
                     />
-                    <span className="input-unit">{t('settings.to')}</span>
-                    <input
-                      type="number"
-                      className="form-input-number"
-                      min={course.answer_delay_min + 1}
-                      max={300}
-                      value={course.answer_delay_max}
-                      onChange={(e) => {
-                        const val = Math.max(course.answer_delay_min + 1, parseInt(e.target.value) || course.answer_delay_min + 1)
-                        updateField(course.courseId, 'answer_delay_max', val)
-                      }}
+                    <QuizModeSelect
+                      label={t('settings.type2')}
+                      value={course.type2}
+                      options={modeOptions(true)}
+                      onChange={(v) => updateField(course.courseId, 'type2', v)}
                     />
-                    <span className="input-unit">{t('settings.seconds')}</span>
+                    <QuizModeSelect
+                      label={t('settings.type3')}
+                      value={course.type3}
+                      options={modeOptions(false)}
+                      onChange={(v) => updateField(course.courseId, 'type3', v)}
+                    />
+                    <div className="form-row">
+                      <label className="form-label">{t('settings.type4')}</label>
+                      <span className="badge badge-gray">{t('settings.reserved')}</span>
+                    </div>
+                    <QuizModeSelect
+                      label={t('settings.type5')}
+                      value={course.type5}
+                      options={[
+                        { value: 'ai', label: 'AI' },
+                        { value: 'off', label: t('settings.disabled') },
+                      ]}
+                      onChange={(v) => updateField(course.courseId, 'type5', v)}
+                    />
                   </div>
-                </div>
 
-                {/* Auto Danmu */}
-                <div className="form-row">
-                  <label className="form-label">{t('settings.autoDanmu')}</label>
-                  <div className="toggle-group">
-                    <button
-                      className={`toggle-option ${course.auto_danmu ? 'selected' : ''}`}
-                      onClick={() => updateField(course.courseId, 'auto_danmu', true)}
-                    >
-                      {t('common.yes')}
-                    </button>
-                    <button
-                      className={`toggle-option ${!course.auto_danmu ? 'selected' : ''}`}
-                      onClick={() => updateField(course.courseId, 'auto_danmu', false)}
-                    >
-                      {t('common.no')}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Danmu Threshold */}
-                {course.auto_danmu && (
-                  <div className="form-row form-row-sub">
-                    <label className="form-label">{t('settings.danmuThreshold')}</label>
-                    <div className="input-with-unit">
-                      <input
-                        type="number"
-                        className="form-input-number"
-                        min={1}
-                        max={99}
-                        value={course.danmu_threshold}
-                        onChange={(e) =>
-                          updateField(course.courseId, 'danmu_threshold', Math.max(1, parseInt(e.target.value) || 1))
-                        }
-                      />
-                      <span className="input-unit">{t('settings.times')}</span>
+                  {/* Timing */}
+                  <div className="settings-group">
+                    <span className="settings-group-label">{t('settings.timing')}</span>
+                    <div className="form-row">
+                      <label className="form-label">{t('settings.answerDelay')}</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          className="form-input-number"
+                          min={1}
+                          max={course.answer_delay_max - 1}
+                          value={course.answer_delay_min}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value) || 1)
+                            updateField(course.courseId, 'answer_delay_min', val)
+                            if (val >= course.answer_delay_max) {
+                              updateField(course.courseId, 'answer_delay_max', val + 1)
+                            }
+                          }}
+                        />
+                        <span className="input-unit">{t('settings.to')}</span>
+                        <input
+                          type="number"
+                          className="form-input-number"
+                          min={course.answer_delay_min + 1}
+                          max={300}
+                          value={course.answer_delay_max}
+                          onChange={(e) => {
+                            const val = Math.max(course.answer_delay_min + 1, parseInt(e.target.value) || course.answer_delay_min + 1)
+                            updateField(course.courseId, 'answer_delay_max', val)
+                          }}
+                        />
+                        <span className="input-unit">{t('settings.seconds')}</span>
+                      </div>
                     </div>
                   </div>
-                )}
 
-                {/* Notification */}
-                <NotificationSection
-                  label={t('settings.notification')}
-                  value={course.notification}
-                  onChange={(v) => updateField(course.courseId, 'notification', v)}
-                />
+                  {/* Danmu */}
+                  <div className="settings-group">
+                    <span className="settings-group-label">{t('settings.danmu')}</span>
+                    <div className="form-row">
+                      <label className="form-label">{t('settings.autoDanmu')}</label>
+                      <div className="toggle-group">
+                        <button
+                          className={`toggle-option ${course.auto_danmu ? 'selected' : ''}`}
+                          onClick={() => updateField(course.courseId, 'auto_danmu', true)}
+                        >
+                          {t('common.yes')}
+                        </button>
+                        <button
+                          className={`toggle-option ${!course.auto_danmu ? 'selected' : ''}`}
+                          onClick={() => updateField(course.courseId, 'auto_danmu', false)}
+                        >
+                          {t('common.no')}
+                        </button>
+                      </div>
+                    </div>
+                    {course.auto_danmu && (
+                      <div className="form-row form-row-sub">
+                        <label className="form-label">{t('settings.danmuThreshold')}</label>
+                        <div className="input-with-unit">
+                          <input
+                            type="number"
+                            className="form-input-number"
+                            min={1}
+                            max={99}
+                            value={course.danmu_threshold}
+                            onChange={(e) =>
+                              updateField(course.courseId, 'danmu_threshold', Math.max(1, parseInt(e.target.value) || 1))
+                            }
+                          />
+                          <span className="input-unit">{t('settings.times')}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-                {/* Voice Notification */}
-                <NotificationSection
-                  label={t('settings.voiceNotification')}
-                  value={course.voice_notification}
-                  onChange={(v) => updateField(course.courseId, 'voice_notification', v)}
-                />
+                  {/* Notifications */}
+                  <div className="settings-group">
+                    <span className="settings-group-label">{t('settings.notifications')}</span>
+                    <NotificationSection
+                      label={t('settings.notification')}
+                      value={course.notification}
+                      onChange={(v) => updateField(course.courseId, 'notification', v)}
+                    />
+                    <NotificationSection
+                      label={t('settings.voiceNotification')}
+                      value={course.voice_notification}
+                      onChange={(v) => updateField(course.courseId, 'voice_notification', v)}
+                    />
+                  </div>
+                </div>
+
+                <div className="course-card-footer">
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => resetToDefault(course.courseId)}
+                  >
+                    {t('settings.default')}
+                  </button>
+                  <div className="footer-spacer" />
+                  {courses.length > 1 && (
+                    <button
+                      className={`btn ${appliedAllFrom === course.courseId ? 'btn-success' : 'btn-secondary'}`}
+                      onClick={() => applyToAll(course)}
+                      disabled={appliedAllFrom !== null}
+                    >
+                      {appliedAllFrom === course.courseId ? t('settings.applied') : t('settings.applyToAll')}
+                    </button>
+                  )}
+                  <button
+                    className={`btn ${course.saveStatus === 'saved'
+                        ? 'btn-success'
+                        : course.saveStatus === 'error'
+                          ? 'btn-danger'
+                          : 'btn-primary'
+                      }`}
+                    onClick={() => handleSave(course)}
+                    disabled={course.saveStatus === 'saving' || !isDirty(course)}
+                  >
+                    {course.saveStatus === 'saving'
+                      ? t('settings.applying')
+                      : course.saveStatus === 'saved'
+                        ? t('settings.applied')
+                        : t('settings.apply')}
+                  </button>
+                </div>
               </div>
-
-              <div className="course-card-footer">
-                <button
-                  className={`btn ${course.saveStatus === 'saved'
-                      ? 'btn-success'
-                      : course.saveStatus === 'error'
-                        ? 'btn-danger'
-                        : 'btn-primary'
-                    }`}
-                  onClick={() => handleSave(course)}
-                  disabled={course.saveStatus === 'saving'}
-                >
-                  {course.saveStatus === 'saving'
-                    ? t('settings.saving')
-                    : course.saveStatus === 'saved'
-                      ? t('settings.saved')
-                      : t('settings.save')}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
