@@ -97,7 +97,7 @@ export default function Login({ onSuccess }: LoginProps) {
       <div className="login-card">
         <h1 className="login-title">{t('login.title')}</h1>
         <div className="form-group" style={{ marginBottom: '1rem', width: '100%' }}>
-          <label className="form-label">{t('login.server')}</label>
+          <label className="form-label" style={{ marginBottom: '0.5rem', marginRight: '0.5rem' }}>{t('login.server')}</label>
           <select
             className="form-select"
             value={domain}

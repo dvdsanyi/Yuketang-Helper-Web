@@ -16,10 +16,10 @@ import event_log
 from config import (
     get_config, save_config, get_course_config, update_course_config,
     get_ai_config, update_ai_config,
-    DEFAULT_COURSE_CONFIG,
+    get_domain, set_domain,
+    DEFAULT_COURSE_CONFIG, DOMAIN_OPTIONS,
 )
 from monitor import Monitor
-from domains import get_domain, set_domain, DOMAIN_OPTIONS
 from utils import get_user_info, get_all_courses
 
 logging.basicConfig(level=logging.INFO)

@@ -37,7 +37,16 @@ DEFAULT_AI_CONFIG: dict = {
     "active_key": -1,
 }
 
-_EMPTY_CONFIG = {"sessionid": "", "domain": "", "user": {}, "course_list": [], "courses": {}, "ai": dict(DEFAULT_AI_CONFIG)}
+DOMAIN_OPTIONS = [
+    {"key": "pro.yuketang.cn", "label": "Hetang Yuketang", "label_zh": "荷塘雨课堂"},
+    {"key": "www.yuketang.cn", "label": "Yuketang", "label_zh": "雨课堂"},
+    {"key": "changjiang.yuketang.cn", "label": "Changjiang Yuketang", "label_zh": "长江雨课堂"},
+    {"key": "huanghe.yuketang.cn", "label": "Huanghe Yuketang", "label_zh": "黄河雨课堂"},
+]
+
+DEFAULT_DOMAIN = "pro.yuketang.cn"
+
+_EMPTY_CONFIG = {"sessionid": "", "domain": DEFAULT_DOMAIN, "user": {}, "course_list": [], "courses": {}, "ai": dict(DEFAULT_AI_CONFIG)}
 
 
 def get_config() -> dict:
@@ -80,7 +89,6 @@ def get_ai_config() -> dict:
 
 
 def get_active_ai_key() -> tuple:
-    """Return (provider, api_key) for the currently active key, or ("", "")."""
     ai = get_ai_config()
     keys = ai["keys"]
     idx = ai["active_key"]
@@ -94,4 +102,15 @@ def update_ai_config(data: dict) -> None:
     cfg = get_config()
     ai = cfg.setdefault("ai", dict(DEFAULT_AI_CONFIG))
     ai.update(data)
+    save_config(cfg)
+
+
+def get_domain() -> str:
+    cfg = get_config()
+    return cfg.get("domain")
+
+
+def set_domain(domain: str) -> None:
+    cfg = get_config()
+    cfg["domain"] = domain
     save_config(cfg)

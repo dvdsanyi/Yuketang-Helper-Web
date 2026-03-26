@@ -1,6 +1,6 @@
 import requests
 
-from domains import get_domain
+from config import get_domain
 
 
 def _make_headers(sessionid: str) -> dict:

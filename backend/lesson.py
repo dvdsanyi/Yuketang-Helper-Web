@@ -10,7 +10,7 @@ import websocket
 
 from ai_provider import AIProvider, create_provider
 from config import get_active_ai_key
-from domains import get_domain
+from config import get_domain
 from utils import _make_headers, get_user_info
 
 logger = logging.getLogger(__name__)
