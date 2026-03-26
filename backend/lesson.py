@@ -10,12 +10,13 @@ import websocket
 
 from ai_provider import AIProvider, create_provider
 from config import get_active_ai_key
-from domains import DOMAIN
+from domains import get_domain
 from utils import _make_headers, get_user_info
 
 logger = logging.getLogger(__name__)
 
-WSS_URL = "wss://%s/wsapp/" % DOMAIN
+def _wss_url() -> str:
+    return "wss://%s/wsapp/" % get_domain()
 
 
 class Lesson:
@@ -55,7 +56,7 @@ class Lesson:
         self._running = True
         self._checkin()
         self.wsapp = websocket.WebSocketApp(
-            url=WSS_URL,
+            url=_wss_url(),
             header=self.headers,
             on_open=self._on_open,
             on_message=self._on_message,
@@ -86,7 +87,7 @@ class Lesson:
             "wordCloud": True,
         }
         r = requests.post(
-            url="https://%s/api/v3/lesson/danmu/send" % DOMAIN,
+            url="https://%s/api/v3/lesson/danmu/send" % get_domain(),
             headers=self.headers,
             data=json.dumps(payload),
             proxies={"http": None, "https": None},
@@ -115,7 +116,7 @@ class Lesson:
             "result": answers,
         }
         r = requests.post(
-            url="https://%s/api/v3/lesson/problem/answer" % DOMAIN,
+            url="https://%s/api/v3/lesson/problem/answer" % get_domain(),
             headers=self.headers,
             data=json.dumps(payload),
             proxies={"http": None, "https": None},
@@ -137,7 +138,7 @@ class Lesson:
 
     def _checkin(self) -> None:
         r = requests.post(
-            url="https://%s/api/v3/lesson/checkin" % DOMAIN,
+            url="https://%s/api/v3/lesson/checkin" % get_domain(),
             headers=self.headers,
             data=json.dumps({"source": 5, "lessonId": self.lessonid}),
             proxies={"http": None, "https": None},
@@ -155,7 +156,7 @@ class Lesson:
         self.user_uname = user_data["name"]
 
         info = requests.get(
-            url="https://%s/api/v3/lesson/basic-info" % DOMAIN,
+            url="https://%s/api/v3/lesson/basic-info" % get_domain(),
             headers=self.headers,
             proxies={"http": None, "https": None},
             timeout=10,
@@ -171,7 +172,7 @@ class Lesson:
 
     def _get_problems_from_presentation(self, presentation_id: Any) -> List[dict]:
         r = requests.get(
-            url="https://%s/api/v3/lesson/presentation/fetch?presentation_id=%s" % (DOMAIN, presentation_id),
+            url="https://%s/api/v3/lesson/presentation/fetch?presentation_id=%s" % (get_domain(), presentation_id),
             headers=self.headers,
             proxies={"http": None, "https": None},
             timeout=10,

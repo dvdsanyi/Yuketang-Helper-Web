@@ -37,7 +37,7 @@ DEFAULT_AI_CONFIG: dict = {
     "active_key": -1,
 }
 
-_EMPTY_CONFIG = {"sessionid": "", "user": {}, "course_list": [], "courses": {}, "ai": dict(DEFAULT_AI_CONFIG)}
+_EMPTY_CONFIG = {"sessionid": "", "domain": "", "user": {}, "course_list": [], "courses": {}, "ai": dict(DEFAULT_AI_CONFIG)}
 
 
 def get_config() -> dict:

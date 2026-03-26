@@ -7,17 +7,16 @@
   },
   "login": {
     "title": "Sign in with WeChat",
-    "instruction": "Open WeChat and scan the QR code below to log in to Yuketang.",
     "scanning": "Scanning...",
     "success": "Login successful! Redirecting...",
     "refresh": "Refresh QR Code",
     "waiting": "Waiting for QR code...",
     "error": "Login error. Please try again.",
-    "note": "Note: Scanning only grants access to your Yuketang session for monitoring."
+    "note": "Note: Scanning only grants access to your Yuketang session for monitoring.",
+    "server": "Server"
   },
   "dashboard": {
     "title": "Dashboard",
-    "activeCourses": "Active Courses",
     "allCourses": "All Courses",
     "recentActivity": "Recent Activity",
     "noActivity": "No activity yet. Events will appear here when a class starts.",
@@ -83,9 +82,7 @@
     "yes": "Yes",
     "no": "No",
     "loading": "Loading...",
-    "error": "Error",
     "logout": "Logout",
-    "language": "Language",
     "on": "On",
     "off": "Off",
     "unknown": "Unknown"

@@ -19,7 +19,7 @@ from config import (
     DEFAULT_COURSE_CONFIG,
 )
 from monitor import Monitor
-from domains import DOMAIN
+from domains import get_domain, set_domain, DOMAIN_OPTIONS
 from utils import get_user_info, get_all_courses
 
 logging.basicConfig(level=logging.INFO)
@@ -171,6 +171,21 @@ class AIActiveKey(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/api/domain")
+async def get_domain_setting():
+    return {"domain": get_domain(), "options": DOMAIN_OPTIONS}
+
+
+@app.put("/api/domain")
+async def update_domain_setting(body: dict):
+    domain = body.get("domain", "")
+    valid_keys = {opt["key"] for opt in DOMAIN_OPTIONS}
+    if domain not in valid_keys:
+        return {"ok": False, "error": "Invalid domain"}
+    set_domain(domain)
+    return {"ok": True, "domain": domain}
+
+
 @app.get("/api/auth/status")
 async def auth_status():
     cfg = get_config()
@@ -235,7 +250,7 @@ async def ws_login(ws: WebSocket):
 
         elif op == "loginsuccess":
             r = requests.post(
-                url="https://%s/pc/web_login" % DOMAIN,
+                url="https://%s/pc/web_login" % get_domain(),
                 data=json.dumps({"UserID": data["UserID"], "Auth": data["Auth"]}),
                 headers={
                     "User-Agent": (
@@ -286,7 +301,7 @@ async def ws_login(ws: WebSocket):
                 count += 1
 
     wsapp = websocket.WebSocketApp(
-        url="wss://%s/wsapp/" % DOMAIN,
+        url="wss://%s/wsapp/" % get_domain(),
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,

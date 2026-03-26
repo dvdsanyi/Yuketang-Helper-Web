@@ -93,7 +93,7 @@ class Monitor:
                     lesson_data=lesson_data,
                     sessionid=self.sessionid,
                     course_config=course_config,
-                    on_event=self._on_lesson_event,
+                    on_event=self._emit,
                 )
 
                 with self._lock:
@@ -127,9 +127,6 @@ class Monitor:
         lesson.start_lesson()
         with self._lock:
             self._active_lessons.pop(lesson.lessonid, None)
-
-    def _on_lesson_event(self, event_type: str, data: dict) -> None:
-        self._emit(event_type, data)
 
     def _emit(self, event_type: str, data: dict) -> None:
         event = {"type": event_type, **data}

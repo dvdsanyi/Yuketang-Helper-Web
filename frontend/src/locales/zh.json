@@ -7,17 +7,16 @@
   },
   "login": {
     "title": "微信扫码登录",
-    "instruction": "打开微信，扫描下方二维码登录雨课堂。",
     "scanning": "扫码中...",
     "success": "登录成功！正在跳转...",
     "refresh": "刷新二维码",
     "waiting": "等待二维码...",
     "error": "登录出错，请重试。",
-    "note": "注：扫码仅用于获取您的雨课堂会话以便监听课程信息。"
+    "note": "注：扫码仅用于获取您的雨课堂会话以便监听课程信息。",
+    "server": "服务器"
   },
   "dashboard": {
     "title": "仪表盘",
-    "activeCourses": "当前课程",
     "allCourses": "全部课程",
     "recentActivity": "最近活动",
     "noActivity": "暂无活动记录。课程开始后事件将显示在此处。",
@@ -83,9 +82,7 @@
     "yes": "是",
     "no": "否",
     "loading": "加载中...",
-    "error": "错误",
     "logout": "退出登录",
-    "language": "语言",
     "on": "开启",
     "off": "关闭",
     "unknown": "未知"

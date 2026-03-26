@@ -4,24 +4,53 @@ import { useTranslation } from 'react-i18next'
 
 type LoginStatus = 'waiting' | 'qr_ready' | 'scanning' | 'success' | 'error'
 
+interface ServerOption {
+  key: string
+  label: string
+  label_zh: string
+}
+
 interface LoginProps {
   onSuccess: () => void
 }
 
 export default function Login({ onSuccess }: LoginProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<LoginStatus>('waiting')
   const [qrUrl, setQrUrl] = useState<string>('')
   const [errorMsg, setErrorMsg] = useState<string>('')
+  const [domain, setDomain] = useState<string>('')
+  const [serverOptions, setServerOptions] = useState<ServerOption[]>([])
+  const domainRef = useRef<string>('')
 
   useEffect(() => {
-    connectWs()
-    return () => {
-      wsRef.current?.close()
-    }
+    fetch('/api/domain')
+      .then(r => r.json())
+      .then(data => {
+        setDomain(data.domain)
+        domainRef.current = data.domain
+        setServerOptions(data.options)
+        saveDomainAndConnect(data.domain)
+      })
+    return () => { wsRef.current?.close() }
   }, [])
+
+  function saveDomainAndConnect(d: string) {
+    fetch('/api/domain', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: d }),
+    }).then(() => connectWs())
+  }
+
+  function handleDomainChange(newDomain: string) {
+    setDomain(newDomain)
+    domainRef.current = newDomain
+    wsRef.current?.close()
+    saveDomainAndConnect(newDomain)
+  }
 
   function connectWs() {
     setStatus('waiting')
@@ -60,14 +89,28 @@ export default function Login({ onSuccess }: LoginProps) {
 
   const handleRefresh = () => {
     wsRef.current?.close()
-    connectWs()
+    saveDomainAndConnect(domainRef.current)
   }
 
   return (
     <div className="login-container">
       <div className="login-card">
         <h1 className="login-title">{t('login.title')}</h1>
-        <p className="login-instruction">{t('login.instruction')}</p>
+        <div className="form-group" style={{ marginBottom: '1rem', width: '100%' }}>
+          <label className="form-label">{t('login.server')}</label>
+          <select
+            className="form-select"
+            value={domain}
+            onChange={e => handleDomainChange(e.target.value)}
+            disabled={status === 'waiting' || status === 'scanning' || status === 'success'}
+          >
+            {serverOptions.map(opt => (
+              <option key={opt.key} value={opt.key}>
+                {i18n.language.startsWith('zh') ? opt.label_zh : opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="qr-wrapper">
           {status === 'waiting' && (

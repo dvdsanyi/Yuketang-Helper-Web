@@ -28,10 +28,6 @@ pip install -r backend/requirements.txt
 npm install --prefix frontend
 ```
 
-### Configure Domain
-
-The default domain is `HETANG_DOMAIN` (`pro.yuketang.cn`), used by Tsinghua University. If your school uses a different domain, edit `backend/domains.py` and change the `DOMAIN` variable.
-
 ### Run
 
 Starts both frontend and backend from the project root:
@@ -96,10 +92,6 @@ python reset.py
 pip install -r backend/requirements.txt
 npm install --prefix frontend
 ```
-
-### 配置域名
-
-默认域名为 `HETANG_DOMAIN`（`pro.yuketang.cn`），清华大学使用。如果你的学校使用其他域名，请编辑 `backend/domains.py`，修改 `DOMAIN` 变量。
 
 ### 启动
 
