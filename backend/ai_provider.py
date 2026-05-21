@@ -39,8 +39,9 @@ SHORT_ANSWER_PROMPT = (
 
 
 def _parse_letters(raw: str, options: List[str], max_count: Optional[int] = None) -> List[str]:
-    parsed = [s.strip() for s in re.split(r"[,\s]+", raw) if s.strip()]
-    picked = [p for p in parsed if p in options]
+    option_map = {opt.upper(): opt for opt in options}
+    parsed = [s.strip().upper() for s in re.split(r"[,\s]+", raw) if s.strip()]
+    picked = [option_map[p] for p in parsed if p in option_map]
     # Preserve first occurrence only.
     seen: set = set()
     deduped = []
@@ -70,11 +71,15 @@ class AIProvider:
         resp.raise_for_status()
         return resp.content
 
-    def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
+    def _chat(self, cover_url: str, text: str) -> str:
         raise NotImplementedError
 
+    def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
+        instruction, max_count = _choice_prompt(problem_type, options, count)
+        return _parse_letters(self._chat(cover_url, instruction), options, max_count=max_count)
+
     def answer_short(self, cover_url: str) -> str:
-        raise NotImplementedError
+        return self._chat(cover_url, SHORT_ANSWER_PROMPT)
 
 
 class GeminiProvider(AIProvider):
@@ -88,25 +93,14 @@ class GeminiProvider(AIProvider):
         from google.genai import types
         return types.Part.from_bytes(data=self._fetch_image(cover_url), mime_type="image/jpeg")
 
-    def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
-        instruction, max_count = _choice_prompt(problem_type, options, count)
+    def _chat(self, cover_url: str, text: str) -> str:
         response = self.client.models.generate_content(
             model=self.model,
-            contents=[self._image_part(cover_url), instruction],
+            contents=[self._image_part(cover_url), text],
         )
-        raw = (response.text or "").strip().upper()
-        logger.info("Gemini raw response for type=%d: %s", problem_type, raw)
-        return _parse_letters(raw, options, max_count=max_count)
-
-    def answer_short(self, cover_url: str) -> str:
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=[self._image_part(cover_url), SHORT_ANSWER_PROMPT],
-        )
-
-        answer = (response.text or "").strip()
-        logger.info("Gemini raw response for short answer: %s", answer)
-        return answer
+        content = (response.text or "").strip()
+        logger.info("Gemini response content: %s", content)
+        return content
 
 
 class QwenProvider(AIProvider):
@@ -125,19 +119,11 @@ class QwenProvider(AIProvider):
                 {"type": "image_url", "image_url": {"url": cover_url}},
                 {"type": "text", "text": text},
             ]}],
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
-        return (response.choices[0].message.content or "").strip()
-
-    def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
-        instruction, max_count = _choice_prompt(problem_type, options, count)
-        raw = self._chat(cover_url, instruction).upper()
-        logger.info("Qwen raw response for type=%d: %s", problem_type, raw)
-        return _parse_letters(raw, options, max_count=max_count)
-
-    def answer_short(self, cover_url: str) -> str:
-        answer = self._chat(cover_url, SHORT_ANSWER_PROMPT)
-        logger.info("Qwen raw response for short answer: %s", answer)
-        return answer
+        content = (response.choices[0].message.content or "").strip()
+        logger.info("Qwen response content: %s", content)
+        return content
 
 
 _PROVIDERS = {
