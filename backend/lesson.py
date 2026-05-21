@@ -170,17 +170,18 @@ class Lesson:
                 self.problems_ls.append(p)
                 existing_ids.add(p["problemId"])
 
-    def _build_random_answers(self, problem: dict) -> list:
-        problemtype = problem["problemType"]
+    def _build_fallback_answer(self, problem: dict, problemtype: int):
+        if problemtype == 5:
+            return " ", "blank"
         options = [opt["key"] for opt in problem.get("options", [])]
         if problemtype == 1:
-            return [random.choice(options)]
-        elif problemtype == 2:
+            return [random.choice(options)], "random"
+        if problemtype == 2:
             k = random.randint(1, len(options))
-            return random.sample(options, k)
-        elif problemtype == 3:
+            return random.sample(options, k), "random"
+        if problemtype == 3:
             count = int(problem.get("pollingCount", 1))
-            return random.sample(options, min(count, len(options)))
+            return random.sample(options, min(count, len(options))), "random"
 
     def _ai_keys_to_try(self) -> list[tuple[str, str, str]]:
         ai_cfg = get_ai_config(self.account_id)
@@ -219,9 +220,6 @@ class Lesson:
 
         for provider_name, api_key, key_name in keys_to_try:
             provider = create_provider(provider_name, api_key)
-            if not provider:
-                logger.warning("[%s] AI provider %r for key %r is unsupported, trying next", self.account_id, provider_name, key_name)
-                continue
             try:
                 if problemtype == 5:
                     return provider.answer_short(cover_url)
@@ -277,22 +275,6 @@ class Lesson:
             "message": result.get("msg", ""),
         })
 
-    def _build_fallback_answer(self, problem: dict, problemtype: int):
-        if problemtype == 5:
-            return " ", "blank"
-        else:
-            return self._build_random_answers(problem), "random"
-
-    def _compute_delay(self, limit: int) -> float:
-        """Submit-delay for random/blank modes.
-
-        With `answer_last5s` enabled and a deadline, submit in the last 1-5s.
-        Otherwise (toggle off or no deadline) submit immediately.
-        """
-        if limit > 0 and self.course_config.get("answer_last5s", True):
-            return max(0, limit - random.uniform(1, min(5, limit)))
-        return 0
-
     def _compute_ai_window(self, limit: int) -> tuple[float, Optional[float]]:
         """Submission window for AI mode: ``(min_hold, max_wait)`` seconds.
 
@@ -310,7 +292,9 @@ class Lesson:
 
     def _wait_for_delay(self, start_time: float, limit: int) -> bool:
         """Wait until the target submit time. Returns False if lesson stopped."""
-        delay = self._compute_delay(limit)
+        delay = 0
+        if limit > 0 and self.course_config.get("answer_last5s", True):
+            delay = max(0, limit - random.uniform(1, min(5, limit)))
         remaining = delay - (time.time() - start_time)
         if remaining > 0:
             time.sleep(remaining)
@@ -394,19 +378,11 @@ class Lesson:
             fallback_answer, fallback_source = self._build_fallback_answer(problem, problemtype)
             self._submit_answer(problemid, problemtype, fallback_answer, fallback_source)
 
-        elif mode == "blank":
-            if not self._wait_for_delay(start_time, limit):
-                return
-            self._submit_answer(problemid, problemtype, " ", "blank")
-
-        elif mode == "random":
-            answers, source = self._build_random_answers(problem), "random"
+        elif mode in ("blank", "random"):
+            answers, source = self._build_fallback_answer(problem, problemtype)
             if not self._wait_for_delay(start_time, limit):
                 return
             self._submit_answer(problemid, problemtype, answers, source)
-
-        else:
-            logger.warning("[%s] Unsupported answer mode %r for problem %s, skipping", self.account_id, mode, problemid)
 
     def _start_answer_for_problem(self, problemid: Any, limit: int) -> None:
         for problem in self.problems_ls:
