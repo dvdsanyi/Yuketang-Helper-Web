@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import websocket
 
-from ai_provider import AIProvider, create_provider
+from ai_provider import create_provider
 from config import api_url, http_request, get_active_ai_key, get_ai_config, get_all_ai_keys, get_account, make_headers
 
 logger = logging.getLogger(__name__)
@@ -182,20 +182,19 @@ class Lesson:
             count = int(problem.get("pollingCount", 1))
             return random.sample(options, min(count, len(options)))
 
-    def _get_ai_provider(self) -> Optional[AIProvider]:
-        provider_name, api_key = get_active_ai_key(self.account_id)
-        return create_provider(provider_name, api_key)
-
-    def _build_ai_answers(self, problem: dict) -> list | str:
+    def _ai_keys_to_try(self) -> list[tuple[str, str]]:
         ai_cfg = get_ai_config(self.account_id)
         fallback = ai_cfg.get("fallback_keys", True)
 
         if fallback:
-            keys_to_try = get_all_ai_keys(self.account_id)
-        else:
-            provider_name, api_key = get_active_ai_key(self.account_id)
-            keys_to_try = [(provider_name, api_key)] if api_key else []
+            return [(provider, key) for provider, key in get_all_ai_keys(self.account_id) if key]
 
+        provider_name, api_key = get_active_ai_key(self.account_id)
+        return [(provider_name, api_key)] if api_key else []
+
+    def _build_ai_answers(self, problem: dict, keys_to_try: Optional[list[tuple[str, str]]] = None) -> list | str:
+        if keys_to_try is None:
+            keys_to_try = self._ai_keys_to_try()
         if not keys_to_try:
             raise RuntimeError("No AI provider available")
 
@@ -304,7 +303,16 @@ class Lesson:
     def _answer_problem(self, problem: dict, problemid: Any, problemtype: int, mode: str, limit: int) -> None:
         start_time = time.time()
 
-        if mode == "ai" and self._get_ai_provider():
+        if mode == "ai":
+            keys_to_try = self._ai_keys_to_try()
+            if not keys_to_try:
+                logger.warning("AI mode selected but no API key configured, using fallback for problem %s", problemid)
+                answers, source = self._build_fallback_answer(problem, problemtype)
+                if not self._wait_for_delay(start_time, limit):
+                    return
+                self._submit_answer(problemid, problemtype, answers, source)
+                return
+
             # Start AI call in background thread.
             result_holder = [None]
             ai_done = threading.Event()
@@ -314,7 +322,7 @@ class Lesson:
 
             def _call_ai():
                 try:
-                    result_holder[0] = self._build_ai_answers(problem)
+                    result_holder[0] = self._build_ai_answers(problem, keys_to_try)
                 except Exception:
                     logger.exception("AI answering failed for problem %s", problemid)
                     ai_failed_event.set()
@@ -333,8 +341,7 @@ class Lesson:
                 if remaining_wait > 0:
                     ai_done.wait(timeout=remaining_wait)
 
-            # Fire ai_failed notification as soon as AI raises, so users can intervene
-            # before the fallback submit.
+            # Fire ai_failed notification as soon as AI raises, so users can intervene before the fallback submit.
             notification_sent = False
             if ai_failed_event.is_set() and result_holder[0] is None:
                 self.on_event("problem", {
@@ -376,14 +383,14 @@ class Lesson:
                 return
             self._submit_answer(problemid, problemtype, " ", "blank")
 
-        else:
-            # random mode (or ai mode without provider configured)
-            if mode == "ai":
-                logger.warning("AI mode selected but no API key configured, falling back to random for problem %s", problemid)
-            answers = self._build_random_answers(problem)
+        elif mode == "random":
+            answers, source = self._build_random_answers(problem), "random"
             if not self._wait_for_delay(start_time, limit):
                 return
-            self._submit_answer(problemid, problemtype, answers, "random")
+            self._submit_answer(problemid, problemtype, answers, source)
+
+        else:
+            logger.warning("Unsupported answer mode %r for problem %s, skipping", mode, problemid)
 
     def _start_answer_for_problem(self, problemid: Any, limit: int) -> None:
         for problem in self.problems_ls:
