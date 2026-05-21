@@ -76,7 +76,10 @@ class AIProvider:
 
     def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
         instruction, max_count = _choice_prompt(problem_type, options, count)
-        return _parse_letters(self._chat(cover_url, instruction), options, max_count=max_count)
+        picked = _parse_letters(self._chat(cover_url, instruction), options, max_count=max_count)
+        if not picked:
+            raise ValueError("AI response did not contain any valid option letter")
+        return picked
 
     def answer_short(self, cover_url: str) -> str:
         return self._chat(cover_url, SHORT_ANSWER_PROMPT)
