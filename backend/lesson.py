@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 import websocket
 
 from ai_provider import create_provider
-from config import api_url, http_request, get_active_ai_key, get_ai_config, get_all_ai_keys, get_account, make_headers
+from config import api_url, http_request, get_ai_config, get_account, make_headers
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class Lesson:
             self.wsapp.run_forever(ping_interval=30, ping_timeout=10)
             if self._stopped_externally or self._lesson_ended:
                 break
-            logger.info("[WS %s] disconnected, reconnecting in 1s", self.lessonname)
+            logger.info("[%s][WS %s] disconnected, reconnecting in 1s", self.account_id, self.lessonname)
             time.sleep(1)
 
         self._running = False
@@ -182,17 +182,32 @@ class Lesson:
             count = int(problem.get("pollingCount", 1))
             return random.sample(options, min(count, len(options)))
 
-    def _ai_keys_to_try(self) -> list[tuple[str, str]]:
+    def _ai_keys_to_try(self) -> list[tuple[str, str, str]]:
         ai_cfg = get_ai_config(self.account_id)
+        keys = ai_cfg.get("keys", [])
+        active = ai_cfg.get("active_key", -1)
         fallback = ai_cfg.get("fallback_keys", True)
 
         if fallback:
-            return [(provider, key) for provider, key in get_all_ai_keys(self.account_id) if key]
+            ordered = []
+            if 0 <= active < len(keys):
+                ordered.append(keys[active])
+            ordered.extend(entry for i, entry in enumerate(keys) if i != active)
+        elif 0 <= active < len(keys):
+            ordered = [keys[active]]
+        else:
+            ordered = []
 
-        provider_name, api_key = get_active_ai_key(self.account_id)
-        return [(provider_name, api_key)] if api_key else []
+        out = []
+        for entry in ordered:
+            provider_name = entry.get("provider", "")
+            api_key = entry.get("key", "")
+            key_name = entry.get("name") or provider_name or "unnamed"
+            if api_key:
+                out.append((provider_name, api_key, key_name))
+        return out
 
-    def _build_ai_answers(self, problem: dict, keys_to_try: Optional[list[tuple[str, str]]] = None) -> list | str:
+    def _build_ai_answers(self, problem: dict, keys_to_try: Optional[list[tuple[str, str, str]]] = None) -> list | str:
         if keys_to_try is None:
             keys_to_try = self._ai_keys_to_try()
         if not keys_to_try:
@@ -202,9 +217,10 @@ class Lesson:
         problemtype = problem["problemType"]
         last_error = None
 
-        for provider_name, api_key in keys_to_try:
+        for provider_name, api_key, key_name in keys_to_try:
             provider = create_provider(provider_name, api_key)
             if not provider:
+                logger.warning("[%s] AI provider %r for key %r is unsupported, trying next", self.account_id, provider_name, key_name)
                 continue
             try:
                 if problemtype == 5:
@@ -213,7 +229,7 @@ class Lesson:
                 count = int(problem.get("pollingCount", 1) or 1) if problemtype == 3 else None
                 return provider.answer_choice(cover_url, option_keys, problemtype, count)
             except Exception as e:
-                logger.warning("AI call failed with %s key, trying next: %s", provider_name, e)
+                logger.warning("[%s] AI call failed with key %r (%s), trying next: %s", self.account_id, key_name, provider_name, e)
                 last_error = e
 
         raise RuntimeError("All AI providers failed") from last_error
@@ -306,7 +322,7 @@ class Lesson:
         if mode == "ai":
             keys_to_try = self._ai_keys_to_try()
             if not keys_to_try:
-                logger.warning("AI mode selected but no API key configured, using fallback for problem %s", problemid)
+                logger.warning("[%s] AI mode selected but no API key configured, using fallback for problem %s", self.account_id, problemid)
                 answers, source = self._build_fallback_answer(problem, problemtype)
                 if not self._wait_for_delay(start_time, limit):
                     return
@@ -318,13 +334,13 @@ class Lesson:
             ai_done = threading.Event()
             ai_failed_event = threading.Event()
 
-            logger.info("Attempting AI answer for problem %s", problemid)
+            logger.info("[%s] Attempting AI answer for problem %s", self.account_id, problemid)
 
             def _call_ai():
                 try:
                     result_holder[0] = self._build_ai_answers(problem, keys_to_try)
                 except Exception:
-                    logger.exception("AI answering failed for problem %s", problemid)
+                    logger.exception("[%s] AI answering failed for problem %s", self.account_id, problemid)
                     ai_failed_event.set()
                 finally:
                     ai_done.set()
@@ -390,7 +406,7 @@ class Lesson:
             self._submit_answer(problemid, problemtype, answers, source)
 
         else:
-            logger.warning("Unsupported answer mode %r for problem %s, skipping", mode, problemid)
+            logger.warning("[%s] Unsupported answer mode %r for problem %s, skipping", self.account_id, mode, problemid)
 
     def _start_answer_for_problem(self, problemid: Any, limit: int) -> None:
         for problem in self.problems_ls:
@@ -445,7 +461,7 @@ class Lesson:
     def _on_message(self, wsapp: websocket.WebSocketApp, message: str) -> None:
         data = json.loads(message)
         op = data.get("op", "")
-        logger.info("[WS %s] op=%s", self.lessonname, op)
+        logger.info("[%s][WS %s] op=%s", self.account_id, self.lessonname, op)
 
         if op == "hello":
             timeline = data.get("timeline", [])
@@ -484,7 +500,7 @@ class Lesson:
                 self._handle_danmu(content)
 
         elif op == "gainbonus":
-            logger.info("[WS %s] gainbonus raw: %s", self.lessonname, message)
+            logger.info("[%s][WS %s] gainbonus raw: %s", self.account_id, self.lessonname, message)
             redpacket = data.get("redpacket", data)
             red_envelope_id = redpacket.get("redEnvelopeId")
             if red_envelope_id and self.course_config.get("auto_redpacket", True):

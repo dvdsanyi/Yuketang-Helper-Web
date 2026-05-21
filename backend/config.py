@@ -267,31 +267,6 @@ def get_ai_config(account_id: str) -> dict:
     return merged
 
 
-def get_active_ai_key(account_id: str) -> tuple:
-    ai = get_ai_config(account_id)
-    keys = ai["keys"]
-    idx = ai["active_key"]
-    if idx < 0 or idx >= len(keys):
-        return ("", "")
-    entry = keys[idx]
-    return (entry["provider"], entry["key"])
-
-
-def get_all_ai_keys(account_id: str) -> list:
-    ai = get_ai_config(account_id)
-    keys = ai["keys"]
-    active = ai["active_key"]
-    if not keys:
-        return []
-    ordered = []
-    if 0 <= active < len(keys):
-        ordered.append((keys[active]["provider"], keys[active]["key"]))
-    for i, entry in enumerate(keys):
-        if i != active:
-            ordered.append((entry["provider"], entry["key"]))
-    return ordered
-
-
 def update_ai_config(account_id: str, data: dict) -> None:
     with _config_lock:
         cfg = get_config()
