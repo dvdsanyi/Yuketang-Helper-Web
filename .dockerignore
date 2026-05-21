@@ -1,0 +1,16 @@
+.git/
+.gitignore
+.venv/
+.vscode/
+.claude/
+.DS_Store
+__pycache__/
+*.pyc
+node_modules/
+logs/
+store/
+api_usage_example/
+note.md
+start.py
+stop.py
+reset.py

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+
+# Usage
+api_usage_example/
+note.md
+
+# Config & data
+store/
+
+# Logs
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# PyInstaller
+build/
+dist/
+
+.claude/
+.vscode/
+.venv/
+.git/

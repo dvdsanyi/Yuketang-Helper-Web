@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build native executables (Win / macOS / Linux × amd64/arm64) via PyInstaller
+  # ---------------------------------------------------------------------------
+  build-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+            arch: amd64
+            ext: .exe
+          - os: macos-latest
+            platform: macOS
+            arch: arm64
+            ext: ""
+          - os: ubuntu-latest
+            platform: Linux
+            arch: amd64
+            ext: ""
+          - os: ubuntu-24.04-arm
+            platform: Linux
+            arch: arm64
+            ext: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Install frontend dependencies and build
+        env:
+          VITE_APP_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable
+        run: pyinstaller YuketangHelper.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YuketangHelper-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/YuketangHelper${{ matrix.ext }}
+
+  # ---------------------------------------------------------------------------
+  # Build & push multi-arch Docker image to Docker Hub
+  # Requires repo secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+  # ---------------------------------------------------------------------------
+  build-docker:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+          tags: |
+            dvdyyz/yuketang-helper:${{ steps.version.outputs.value }}
+            dvdyyz/yuketang-helper:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with all artifacts + auto-generated changelog
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [build-binaries, build-docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: YuketangHelper-*
+
+      - name: Prepare release files
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p release
+          cp artifacts/YuketangHelper-Windows-amd64/YuketangHelper.exe "release/YuketangHelper-Windows-amd64-${VERSION}.exe"
+          cp artifacts/YuketangHelper-macOS-arm64/YuketangHelper   "release/YuketangHelper-macOS-arm64-${VERSION}"
+          cp artifacts/YuketangHelper-Linux-amd64/YuketangHelper   "release/YuketangHelper-Linux-amd64-${VERSION}"
+          cp artifacts/YuketangHelper-Linux-arm64/YuketangHelper   "release/YuketangHelper-Linux-arm64-${VERSION}"
+          chmod +x \
+            "release/YuketangHelper-macOS-arm64-${VERSION}" \
+            "release/YuketangHelper-Linux-amd64-${VERSION}" \
+            "release/YuketangHelper-Linux-arm64-${VERSION}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: See the auto-generated change list below.

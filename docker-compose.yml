@@ -1,0 +1,13 @@
+services:
+  yuketang-helper:
+    build: .
+    # Host port follows $PORT (default 8500); container port stays 8500.
+    # Set PORT in .env or shell to remap the host side without touching this file.
+    ports:
+      - "${PORT:-8500}:8500"
+    volumes:
+      - yuketang_data:/data
+    restart: unless-stopped
+
+volumes:
+  yuketang_data:
