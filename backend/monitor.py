@@ -1,14 +1,12 @@
 import asyncio
 import logging
 import threading
-import time
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional
 
 import event_log
 import pushdeer
 from config import (
-    DEFAULT_POLL_INTERVAL, MAX_POLL_INTERVAL, MIN_POLL_INTERVAL,
-    api_url, get_account, get_course_config, get_domain, get_poll_interval,
+    api_url, get_course_config, get_domain, get_poll_interval,
     get_sessionid, http_request, make_headers, update_course_config,
 )
 from lesson import Lesson
@@ -16,6 +14,10 @@ from lesson import Lesson
 logger = logging.getLogger(__name__)
 
 URL_ON_LESSON = "https://{domain}/api/v3/classroom/on-lesson-upcoming-exam"
+
+# Consecutive rejected polls before we declare the sessionid dead. One bad
+# response (maintenance, rate limit) must not take the monitor offline.
+MAX_REJECTED_POLLS = 3
 
 
 class Monitor:
@@ -31,7 +33,7 @@ class Monitor:
         self.account_id = account_id
         self.event_queue = event_queue
         self._on_session_expired = on_session_expired
-        self._active_lessons: Dict[int, Lesson] = {}
+        self._active_lessons: dict[int, Lesson] = {}
         self._lock = threading.Lock()
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -54,6 +56,7 @@ class Monitor:
 
     def stop(self) -> None:
         self._running = False
+        self._wake_event.set()  # break the poll loop's wait immediately
         with self._lock:
             for lesson in list(self._active_lessons.values()):
                 lesson.stop_lesson()
@@ -68,55 +71,72 @@ class Monitor:
                     "lessonid": lesson.lessonid,
                     "lessonname": lesson.lessonname,
                     "classroomid": lesson.classroomid,
-                    "teacher_name": lesson.teacher_name,
                 }
                 for lesson in self._active_lessons.values()
             ]
+
+    def update_lesson_config(self, classroom_id: str, patch: dict) -> None:
+        """Apply a course-settings patch to any currently-running lesson(s) for
+        the given classroom. Called from the HTTP layer so settings take effect
+        without waiting for the next poll."""
+        with self._lock:
+            for lesson in self._active_lessons.values():
+                if str(lesson.classroomid) == classroom_id:
+                    lesson.course_config.update(patch)
 
     def _current_credentials(self) -> tuple[str, str]:
         return get_domain(self.account_id), get_sessionid(self.account_id)
 
     def _run(self) -> None:
+        rejected = 0  # consecutive polls Yuketang answered with a non-zero code
         while self._running:
             try:
                 domain, sessionid = self._current_credentials()
                 if not sessionid:
+                    self._running = False
                     return
                 headers = make_headers(domain, sessionid)
                 r = http_request("GET", api_url(domain, URL_ON_LESSON), headers=headers)
                 data = r.json()
                 if data.get("code") != 0:
-                    logger.warning("[%s] Session expired: %s", self.account_id, data.get("msg", ""))
-                    self._emit("session_expired", {"message": data.get("msg", "Session expired")})
-                    # Stop all per-lesson WS threads so they don't keep hammering
-                    # Yuketang with an expired sessionid.
-                    with self._lock:
-                        for lesson in list(self._active_lessons.values()):
-                            lesson.stop_lesson()
-                        self._active_lessons.clear()
-                    if self._on_session_expired:
-                        self._on_session_expired(self.account_id)
-                    self._running = False
-                    return
-                lesson_list = data["data"]["onLessonClassrooms"]
-                logger.info("[%s] Monitor poll: %d active lesson(s)", self.account_id, len(lesson_list))
-                self._sync_lessons(lesson_list)
-            except Exception as e:
-                logger.warning("[%s] Monitor poll failed: %s", self.account_id, e)
-            interval = get_poll_interval(self.account_id)
+                    # One rejection is more often a hiccup on their side than a
+                    # dead session, and tearing the monitor down here would
+                    # silently stop every later lesson — so count them first.
+                    rejected += 1
+                    msg = data.get("msg", "")
+                    logger.warning(f"[{self.account_id}] poll rejected ({rejected}/{MAX_REJECTED_POLLS}): {msg}")
+                    if rejected >= MAX_REJECTED_POLLS:
+                        self._expire_session(msg)
+                        return
+                else:
+                    rejected = 0
+                    lesson_list = data["data"]["onLessonClassrooms"]
+                    logger.info(f"[{self.account_id}] Monitor poll: {len(lesson_list)} active lesson(s)")
+                    self._sync_lessons(lesson_list, domain, sessionid)
+            except Exception:
+                logger.exception(f"[{self.account_id}] Monitor poll failed")
+            # wake() and stop() both set _wake_event, so a config change or
+            # shutdown takes effect immediately instead of waiting the
+            # whole interval.
             self._wake_event.clear()
-            # Tick once per second so a stop() / interval change takes effect
-            # within ~1s instead of waiting the whole interval.
-            for _ in range(interval):
-                if not self._running:
-                    return
-                if self._wake_event.is_set():
-                    break
-                time.sleep(1)
+            self._wake_event.wait(timeout=get_poll_interval(self.account_id))
 
-    def _sync_lessons(self, lesson_list: list) -> None:
+    def _expire_session(self, message: str) -> None:
+        """Give up on this account's sessionid: stop every lesson WS so they
+        don't keep hammering Yuketang, and tell the app to clear the login."""
+        logger.warning(f"[{self.account_id}] Session expired: {message}")
+        self._emit("session_expired", {"message": message or "Session expired"})
+        with self._lock:
+            lessons = list(self._active_lessons.values())
+            self._active_lessons.clear()
+        for lesson in lessons:
+            lesson.stop_lesson()
+        if self._on_session_expired:
+            self._on_session_expired(self.account_id)
+        self._running = False
+
+    def _sync_lessons(self, lesson_list: list, domain: str, sessionid: str) -> None:
         incoming_ids = set()
-        domain, sessionid = self._current_credentials()
 
         for item in lesson_list:
             lesson_id = item["lessonId"]
@@ -139,8 +159,7 @@ class Monitor:
                     update_course_config(self.account_id, classroom_id, {"name": lesson_name})
                 if not course_config.get("course_enabled", True):
                     logger.info(
-                        "[%s] Skipping lesson %s (%s): course disabled",
-                        self.account_id, lesson_id, lesson_name,
+                        f"[{self.account_id}] Skipping lesson {lesson_id} ({lesson_name}): course disabled"
                     )
                     # Drop from incoming so we re-evaluate next poll (cheap)
                     # but don't emit lesson_start.
@@ -161,33 +180,46 @@ class Monitor:
                 self._emit("lesson_start", {
                     "lesson": lesson.lessonname,
                     "lessonid": lesson_id,
-                    "message": "Started monitoring: %s" % lesson.lessonname,
+                    "message": f"Started monitoring: {lesson.lessonname}",
                 })
 
                 threading.Thread(
                     target=self._lesson_thread,
                     args=(lesson,),
                     daemon=True,
-                    name="lesson-%s-%s" % (self.account_id, lesson_id),
+                    name=f"lesson-{self.account_id}-{lesson_id}",
                 ).start()
 
         with self._lock:
             ended = [lid for lid in self._active_lessons if lid not in incoming_ids]
         for lid in ended:
-            with self._lock:
-                lesson = self._active_lessons.pop(lid, None)
-            if lesson:
-                lesson.stop_lesson()
-                self._emit("lesson_end", {
-                    "lesson": lesson.lessonname,
-                    "lessonid": lesson.lessonid,
-                    "message": "Lesson ended: %s" % lesson.lessonname,
-                })
+            self._evict(lid)
+
+    def _evict(self, lesson_id: int) -> None:
+        """Pop a lesson from the registry and tear it down. stop_lesson() may
+        block on WS close, so we release self._lock before calling it."""
+        with self._lock:
+            lesson = self._active_lessons.pop(lesson_id, None)
+        if lesson is None:
+            return
+        lesson.stop_lesson()
+        self._emit("lesson_end", {
+            "lesson": lesson.lessonname,
+            "lessonid": lesson.lessonid,
+            "message": f"Lesson ended: {lesson.lessonname}",
+        })
 
     def _lesson_thread(self, lesson: Lesson) -> None:
-        lesson.start_lesson()
-        with self._lock:
-            self._active_lessons.pop(lesson.lessonid, None)
+        try:
+            lesson.start_lesson()
+        except Exception as e:
+            # Check-in or the WS loop blew up. Freeing the slot in `finally`
+            # lets the next poll rebuild this lesson from scratch — otherwise
+            # the class sits "tracked" but unattended until it ends.
+            logger.warning(f"[{self.account_id}] lesson {lesson.lessonid} aborted, retrying next poll: {e}")
+        finally:
+            with self._lock:
+                self._active_lessons.pop(lesson.lessonid, None)
 
     def _emit(self, event_type: str, data: dict) -> None:
         event = {"type": event_type, "account_id": self.account_id, **data}

@@ -242,27 +242,11 @@ button:disabled {
   padding: 4px 0;
 }
 
-.page-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--color-text);
-  margin-bottom: 20px;
-}
-
 .empty-message {
   color: var(--color-text-muted);
   font-size: 13px;
   text-align: center;
   padding: 20px 0;
-}
-
-.centered-muted {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  color: var(--color-text-muted);
 }
 
 .loading-screen {
@@ -1166,4 +1150,65 @@ button:disabled {
 .login-cancel {
   align-self: flex-start;
   margin-bottom: 8px;
+}
+
+/* ===========================
+   Settings page helpers (replaces inline styles)
+   =========================== */
+.form-row-padded {
+  padding: 0 16px;
+  margin-bottom: 8px;
+}
+
+.form-row-padded-y {
+  padding: 12px 16px;
+}
+
+.input-with-unit-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-card-hint {
+  padding: 12px 16px 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* ===========================
+   Login form helpers (replaces inline styles)
+   =========================== */
+.login-form-row {
+  margin-bottom: 1rem;
+  width: 100%;
+}
+
+.login-form-label {
+  margin-bottom: 0.5rem;
+  margin-right: 0.5rem;
+}
+
+.login-form-block {
+  width: 100%;
+}
+
+.login-form-field {
+  margin-bottom: 0.75rem;
+}
+
+.login-form-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+}
+
+.login-form-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.login-submit {
+  width: 100%;
 }

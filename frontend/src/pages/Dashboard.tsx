@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { NotificationSub as VoiceConfig, CourseItem } from '../types'
+import type { TFunction } from 'i18next'
+import type { CourseItem, NotificationSub } from '../types'
 import { useAccounts } from '../hooks/useAccounts'
 
 interface ActiveLesson {
   lessonid: number
   lessonname: string
   classroomid: number
-  teacher_name: string | null
 }
 
 interface ActivityEvent {
@@ -19,13 +19,16 @@ interface ActivityEvent {
   status?: string
   message?: string
   content?: string
-  answers?: unknown[]
+  // Type 1/2/3 send list[str]; type 5 (short answer) sends a string.
+  answers?: unknown
   problemid?: unknown
   problemtype?: number
   source?: string
 }
 
-const VOICE_SUBOPTION: Partial<Record<string, keyof Omit<VoiceConfig, 'enabled'>>> = {
+// Event types that have a corresponding course notification sub-toggle.
+// Mirrors backend/pushdeer.py:_EVENT_SUBKEY.
+const NOTIF_SUBKEY: Partial<Record<string, keyof Omit<NotificationSub, 'enabled'>>> = {
   signin: 'signin',
   problem: 'problem',
   problem_received: 'problem',
@@ -34,74 +37,83 @@ const VOICE_SUBOPTION: Partial<Record<string, keyof Omit<VoiceConfig, 'enabled'>
   red_packet: 'red_packet',
 }
 
-let eventCounter = 0
+function localTimeString(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
-function formatEventLabel(event: ActivityEvent, t: (key: string) => string): string {
-  const typeName = t(`events.${event.type}`) || event.type
-  const lesson = event.lesson ? `[${event.lesson}] ` : ''
-
-  switch (event.type) {
-    case 'signin':
-      return `${lesson}${typeName}: ${t(`events.${event.status || 'success'}`)}`
-    case 'problem_received':
-      return `${lesson}${typeName}`
-    case 'problem': {
-      const problemTypeName = event.problemtype
-        ? t(`events.problemType${event.problemtype}`)
-        : typeName
-      if (event.status === 'ai_failed') {
-        return `${lesson}${problemTypeName}: ${t('events.ai_failed')}`
-      }
-      const statusText = t(`events.${event.status || 'success'}`)
-      const answerText = event.answers
-        ? Array.isArray(event.answers)
-          ? event.answers.join(', ')
-          : typeof event.answers === 'object'
-            ? JSON.stringify(event.answers)
-            : String(event.answers)
-        : ''
-      const sourceText = event.source ? ` [${t(`events.source_${event.source}`)}]` : ''
-      return `${lesson}${problemTypeName}: ${statusText}${answerText ? `, ${t('events.answer')}: ${answerText}` : ''}${sourceText}`
-    }
-    case 'danmu':
-      return `${lesson}${typeName}: "${event.content || ''}" — ${t(`events.${event.status || 'success'}`)}`
-    case 'call':
-      return `${lesson}${typeName}`
-    case 'red_packet':
-      return `${lesson}${typeName}: ${t(`events.${event.status || 'success'}`)}`
-    case 'session_expired':
-      return `${typeName}`
-    case 'lesson_end':
-      return `${lesson}${typeName}`
-    case 'lesson_start':
-      return `${lesson}${typeName}`
-    case 'network':
-      return `${typeName}: ${event.message || ''}`
-    default:
-      return `${lesson}${typeName}${event.message ? ': ' + event.message : ''}`
+function asEvent(m: Record<string, unknown>, id: number, timestamp: string): ActivityEvent {
+  return {
+    id,
+    timestamp,
+    type: String(m.type),
+    lesson: m.lesson as string | undefined,
+    lessonid: m.lessonid as number | undefined,
+    status: m.status as string | undefined,
+    message: m.message as string | undefined,
+    content: m.content as string | undefined,
+    answers: m.answers,
+    problemid: m.problemid,
+    problemtype: m.problemtype as number | undefined,
+    source: m.source as string | undefined,
   }
 }
 
-function buildSpeechText(event: ActivityEvent, isChinese: boolean): string {
+function answersText(answers: unknown): string {
+  if (answers == null) return ''
+  if (Array.isArray(answers)) return answers.join(', ')
+  if (typeof answers === 'object') return JSON.stringify(answers)
+  return String(answers)
+}
+
+// Per-event-type formatter. Keep in sync with backend/pushdeer.py:_format_label.
+type Fmt = (event: ActivityEvent, t: TFunction, parts: { lesson: string; typeName: string }) => string
+
+const FORMATTERS: Record<string, Fmt> = {
+  signin: (e, t, p) => `${p.lesson}${p.typeName}: ${t(`events.${e.status || 'success'}`)}`,
+  problem_received: (_e, _t, p) => `${p.lesson}${p.typeName}`,
+  problem: (e, t, p) => {
+    const problemTypeName = e.problemtype ? t(`events.problemType${e.problemtype}`) : p.typeName
+    if (e.status === 'ai_failed') return `${p.lesson}${problemTypeName}: ${t('events.ai_failed')}`
+    const statusText = t(`events.${e.status || 'success'}`)
+    const text = answersText(e.answers)
+    const sourceText = e.source ? ` [${t(`events.source_${e.source}`)}]` : ''
+    const answerSuffix = text ? `, ${t('events.answer')}: ${text}` : ''
+    return `${p.lesson}${problemTypeName}: ${statusText}${answerSuffix}${sourceText}`
+  },
+  danmu: (e, t, p) => `${p.lesson}${p.typeName}: "${e.content || ''}" — ${t(`events.${e.status || 'success'}`)}`,
+  call: (_e, _t, p) => `${p.lesson}${p.typeName}`,
+  red_packet: (e, t, p) => `${p.lesson}${p.typeName}: ${t(`events.${e.status || 'success'}`)}`,
+  session_expired: (_e, _t, p) => p.typeName,
+  lesson_end: (_e, _t, p) => `${p.lesson}${p.typeName}`,
+  lesson_start: (_e, _t, p) => `${p.lesson}${p.typeName}`,
+}
+
+function formatEventLabel(event: ActivityEvent, t: TFunction): string {
+  // i18next returns the key itself on a miss, so no `|| event.type` fallback needed.
+  const parts = {
+    lesson: event.lesson ? `[${event.lesson}] ` : '',
+    typeName: t(`events.${event.type}`),
+  }
+  const fmt = FORMATTERS[event.type]
+  if (fmt) return fmt(event, t, parts)
+  return `${parts.lesson}${parts.typeName}${event.message ? ': ' + event.message : ''}`
+}
+
+// Speech text via i18n — see locales/*.json "speech".
+function buildSpeechText(event: ActivityEvent, t: TFunction): string {
   const lesson = event.lesson || ''
   switch (event.type) {
-    case 'signin':
-      return isChinese ? `${lesson}已签到` : `${lesson} checked in`
-    case 'problem_received':
-      return isChinese ? `${lesson}收到题目` : `${lesson} problem received`
+    case 'signin':           return t('speech.signin', { lesson })
+    case 'problem_received': return t('speech.problem_received', { lesson })
     case 'problem':
-      if (event.status === 'ai_failed') {
-        return isChinese ? `${lesson}AI答题失败，请手动作答` : `${lesson} AI failed, please answer manually`
-      }
-      return isChinese ? `${lesson}已答题` : `${lesson} answered`
-    case 'call':
-      return isChinese ? '您被点名' : 'You were called on'
-    case 'danmu':
-      return isChinese ? '弹幕已发送' : 'Danmu sent'
-    case 'red_packet':
-      return isChinese ? `${lesson}已抢红包` : `${lesson} red packet grabbed`
-    default:
-      return ''
+      return event.status === 'ai_failed'
+        ? t('speech.problem_ai_failed', { lesson })
+        : t('speech.problem_answered', { lesson })
+    case 'call':             return t('speech.call')
+    case 'danmu':            return t('speech.danmu')
+    case 'red_packet':       return t('speech.red_packet', { lesson })
+    default:                 return ''
   }
 }
 
@@ -112,8 +124,6 @@ function eventBadgeClass(event: ActivityEvent): string {
   if (event.type === 'red_packet') return event.status === 'success' ? 'badge badge-green' : 'badge badge-red'
   if (event.type === 'problem_received') return 'badge badge-blue'
   if (event.type === 'call') return 'badge badge-yellow'
-  if (event.type === 'network')
-    return event.status === 'error' ? 'badge badge-red' : 'badge badge-green'
   if (event.status === 'success') return 'badge badge-green'
   if (event.status === 'error' || event.status === 'ai_failed') return 'badge badge-red'
   return 'badge badge-blue'
@@ -127,21 +137,26 @@ export default function Dashboard() {
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const logRef = useRef<HTMLDivElement>(null)
 
-  const voiceConfigsRef = useRef<Record<string, VoiceConfig>>({})
-  const notifConfigsRef = useRef<Record<string, VoiceConfig>>({})
+  const eventCounter = useRef(0)
+  const voiceConfigsRef = useRef<Record<string, NotificationSub>>({})
+  const notifConfigsRef = useRef<Record<string, NotificationSub>>({})
   const lessonToClassroomRef = useRef<Record<string, string>>({})
-  const langRef = useRef(i18n.language)
 
+  // Stable refs to t / language so the WebSocket handler doesn't have to
+  // re-subscribe every time i18n updates.
+  const tRef = useRef(t)
+  const langRef = useRef(i18n.language)
   useEffect(() => {
+    tRef.current = t
     langRef.current = i18n.language
-  }, [i18n.language])
+  }, [t, i18n.language])
 
   const fetchAllCourses = useCallback(() => {
     if (!accountId) return
     fetch(`/api/accounts/${accountId}/courses/all`)
       .then((r) => r.json())
       .then((data: CourseItem[]) => setAllCourses(data))
-      .catch(() => {})
+      .catch((e) => console.warn('fetchAllCourses failed', e))
   }, [accountId])
 
   const fetchLessons = useCallback(() => {
@@ -155,25 +170,24 @@ export default function Dashboard() {
         }
         lessonToClassroomRef.current = map
       })
-      .catch(() => {})
+      .catch((e) => console.warn('fetchLessons failed', e))
   }, [accountId])
 
   const fetchCourseConfigs = useCallback(() => {
     if (!accountId) return
     fetch(`/api/accounts/${accountId}/courses/settings`)
       .then((r) => r.json())
-      .then((data: Record<string, { notification?: VoiceConfig; voice_notification?: VoiceConfig }>) => {
-        const voiceMap: Record<string, VoiceConfig> = {}
-        const notifMap: Record<string, VoiceConfig> = {}
-        const defaults: VoiceConfig = { enabled: true, signin: true, problem: true, call: true, danmu: false, red_packet: true }
+      .then((data: Record<string, { notification: NotificationSub; voice_notification: NotificationSub }>) => {
+        const voiceMap: Record<string, NotificationSub> = {}
+        const notifMap: Record<string, NotificationSub> = {}
         for (const [id, cfg] of Object.entries(data)) {
-          notifMap[id] = cfg.notification ?? { ...defaults }
-          voiceMap[id] = cfg.voice_notification ?? { ...defaults, enabled: false }
+          notifMap[id] = cfg.notification
+          voiceMap[id] = cfg.voice_notification
         }
         notifConfigsRef.current = notifMap
         voiceConfigsRef.current = voiceMap
       })
-      .catch(() => {})
+      .catch((e) => console.warn('fetchCourseConfigs failed', e))
   }, [accountId])
 
   // Reload whenever active account changes
@@ -195,22 +209,21 @@ export default function Dashboard() {
     }
   }, [])
 
-  function notify(event: ActivityEvent) {
+  const notify = useCallback((event: ActivityEvent) => {
     if (!('Notification' in window) || Notification.permission !== 'granted') return
-    const isChinese = langRef.current.startsWith('zh')
-    const title = event.lesson ?? (isChinese ? '雨课堂助手' : 'Yuketang Helper')
-    const body = buildSpeechText(event, isChinese)
+    const body = buildSpeechText(event, tRef.current)
     if (!body) return
+    const title = event.lesson ?? tRef.current('nav.brand')
     new Notification(title, { body, silent: true })
-  }
+  }, [])
 
-  function speak(text: string) {
+  const speak = useCallback((text: string) => {
     if (!text || !window.speechSynthesis) return
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = langRef.current.startsWith('zh') ? 'zh-CN' : 'en-US'
     window.speechSynthesis.cancel()
     window.speechSynthesis.speak(utter)
-  }
+  }, [])
 
   // Per-account WebSocket subscription
   useEffect(() => {
@@ -231,25 +244,16 @@ export default function Dashboard() {
         } catch {
           return
         }
-        const t = msg['type'] as string
-        if (t === 'heartbeat') return
+        const type = msg['type'] as string
+        if (type === 'heartbeat') return
 
-        if (t === 'history') {
+        if (type === 'history') {
           const raw = (msg['events'] as Record<string, unknown>[]) ?? []
-          const historical: ActivityEvent[] = raw.map((m) => ({
-            id: ++eventCounter,
-            timestamp: (m['logged_at'] as string | undefined)?.slice(11, 19) ?? '',
-            type: m['type'] as string,
-            lesson: m['lesson'] as string | undefined,
-            lessonid: m['lessonid'] as number | undefined,
-            status: m['status'] as string | undefined,
-            message: m['message'] as string | undefined,
-            content: m['content'] as string | undefined,
-            answers: m['answers'] as unknown[] | undefined,
-            problemid: m['problemid'],
-            problemtype: m['problemtype'] as number | undefined,
-            source: m['source'] as string | undefined,
-          }))
+          const historical = raw.map((m) => {
+            const logged = m['logged_at'] as string | undefined
+            const ts = logged ? localTimeString(new Date(logged)) : ''
+            return asEvent(m, ++eventCounter.current, ts)
+          })
           setEvents(historical.reverse())
           fetchAllCourses()
           fetchLessons()
@@ -257,21 +261,7 @@ export default function Dashboard() {
           return
         }
 
-        const event: ActivityEvent = {
-          id: ++eventCounter,
-          timestamp: new Date().toTimeString().slice(0, 8),
-          type: msg['type'] as string,
-          lesson: msg['lesson'] as string | undefined,
-          lessonid: msg['lessonid'] as number | undefined,
-          status: msg['status'] as string | undefined,
-          message: msg['message'] as string | undefined,
-          content: msg['content'] as string | undefined,
-          answers: msg['answers'] as unknown[] | undefined,
-          problemid: msg['problemid'],
-          problemtype: msg['problemtype'] as number | undefined,
-          source: msg['source'] as string | undefined,
-        }
-
+        const event = asEvent(msg, ++eventCounter.current, localTimeString(new Date()))
         setEvents((prev) => [event, ...prev].slice(0, 50))
 
         if (event.type === 'lesson_start' || event.type === 'lesson_end') {
@@ -280,17 +270,13 @@ export default function Dashboard() {
           fetchCourseConfigs()
         }
 
-        const subKey = VOICE_SUBOPTION[event.type]
+        const subKey = NOTIF_SUBKEY[event.type]
         if (subKey) {
           const courseId = lessonToClassroomRef.current[String(event.lessonid)] ?? String(event.lessonid)
           const notifCfg = notifConfigsRef.current[courseId]
-          if (notifCfg?.enabled && notifCfg[subKey]) {
-            notify(event)
-          }
+          if (notifCfg?.enabled && notifCfg[subKey]) notify(event)
           const voiceCfg = voiceConfigsRef.current[courseId]
-          if (voiceCfg?.enabled && voiceCfg[subKey]) {
-            speak(buildSpeechText(event, langRef.current.startsWith('zh')))
-          }
+          if (voiceCfg?.enabled && voiceCfg[subKey]) speak(buildSpeechText(event, tRef.current))
         }
       }
 
@@ -309,12 +295,10 @@ export default function Dashboard() {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       ws?.close()
     }
-  }, [accountId, fetchAllCourses, fetchLessons, fetchCourseConfigs])
+  }, [accountId, fetchAllCourses, fetchLessons, fetchCourseConfigs, notify, speak])
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = 0
-    }
+    if (logRef.current) logRef.current.scrollTop = 0
   }, [events])
 
   return (
@@ -361,7 +345,7 @@ export default function Dashboard() {
                 <span className={eventBadgeClass(event)}>
                   {event.type === 'problem' && event.problemtype
                     ? t(`events.problemType${event.problemtype}`)
-                    : t(`events.${event.type}`) || event.type}
+                    : t(`events.${event.type}`)}
                 </span>
                 <span className="activity-text">{formatEventLabel(event, t)}</span>
               </div>

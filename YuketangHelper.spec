@@ -30,6 +30,9 @@ a = Analysis(
         (str(ROOT / "frontend" / "dist"), "static"),
         # Backend source files (imported at runtime)
         (str(ROOT / "backend"), "backend"),
+        # Locales — pushdeer.py loads frontend's i18n JSON at runtime so push
+        # messages stay in sync with the UI. Bundle them next to backend/.
+        (str(ROOT / "frontend" / "src" / "locales"), "locales"),
         # CA certificates for SSL/TLS
         (certifi.where(), "certifi"),
         *_tzdata_datas,
@@ -40,7 +43,7 @@ a = Analysis(
         # (no system /usr/share/zoneinfo). Loaded indirectly via importlib.resources,
         # so PyInstaller won't auto-detect it.
         "tzdata",
-        # Lazy-imported in config._resolve_store_dir for frozen builds.
+        # Used by config._resolve_store_dir for frozen builds.
         "platformdirs",
         # Uvicorn internals that are dynamically imported
         "uvicorn.logging",
@@ -62,6 +65,16 @@ a = Analysis(
         "lesson",
         "event_log",
         "ai_provider",
+        "auth",
+        "state",
+        "routers",
+        "routers.accounts",
+        "routers.ai",
+        "routers.courses",
+        "routers.domains",
+        "routers.events",
+        "routers.login",
+        "routers.pushdeer_router",
     ],
     noarchive=False,
 )
@@ -79,5 +92,4 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,  # Keep console window for logs; set to False to hide
-    # icon="icon.ico",  # Uncomment and provide an icon file if desired
 )

@@ -7,6 +7,9 @@ import Settings from './pages/Settings'
 import { AccountsProvider, useAccounts } from './hooks/useAccounts'
 import AccountSwitcher from './components/AccountSwitcher'
 
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  isActive ? 'nav-link active' : 'nav-link'
+
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { loading, state, activeAccount } = useAccounts()
   if (loading) {
@@ -41,16 +44,10 @@ function AppInner() {
           <div className="navbar-links">
             {hasAuthedAccount && (
               <>
-                <NavLink
-                  to="/dashboard"
-                  className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
-                >
+                <NavLink to="/dashboard" className={navLinkClass}>
                   {t('nav.dashboard')}
                 </NavLink>
-                <NavLink
-                  to="/settings"
-                  className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
-                >
+                <NavLink to="/settings" className={navLinkClass}>
                   {t('nav.settings')}
                 </NavLink>
               </>

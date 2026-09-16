@@ -1,5 +1,10 @@
-import json, os, socket, subprocess, sys
+import json
+import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
+
 from stop import stop
 
 ROOT = Path(__file__).resolve().parent

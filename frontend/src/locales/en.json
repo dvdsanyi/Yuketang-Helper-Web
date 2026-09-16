@@ -21,7 +21,6 @@
     "cancel": "Back"
   },
   "dashboard": {
-    "title": "Dashboard",
     "allCourses": "All Courses",
     "recentActivity": "Recent Activity",
     "noActivity": "No activity yet. Events will appear here when a class starts.",
@@ -46,6 +45,7 @@
     "apiKeyPlaceholder": "Enter your API key",
     "keyNamePlaceholder": "Customize your key name",
     "addKey": "Add Key",
+    "addKeyFailed": "Add failed",
     "use": "Use",
     "inUse": "In Use",
     "fallbackKeys": "API Key Fallback",
@@ -84,6 +84,7 @@
     "redPacket": "Red Packet",
     "autoRedpacket": "Auto Grab",
     "applyToAll": "Apply to All",
+    "applyToAllFailed": "Partial failure",
     "default": "Default",
     "pushdeerSettings": "PushDeer Settings",
     "pushdeerNotification": "Mobile Push (PushDeer)",
@@ -102,6 +103,15 @@
     "pollInterval": "Poll Interval",
     "pollIntervalDesc": "How often to check Yuketang for active lessons. Allowed: {{min}}–{{max}}s (default {{default}}s). Lower = faster lesson detection but more API requests.",
     "seconds": "seconds"
+  },
+  "speech": {
+    "signin": "{{lesson}} checked in",
+    "problem_received": "{{lesson}} problem received",
+    "problem_answered": "{{lesson}} answered",
+    "problem_ai_failed": "{{lesson}} AI failed, please answer manually",
+    "call": "You were called on",
+    "danmu": "Danmu sent",
+    "red_packet": "{{lesson}} red packet grabbed"
   },
   "accounts": {
     "title": "Accounts",

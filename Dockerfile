@@ -1,5 +1,5 @@
 # Stage 1: Build frontend
-FROM node:20-alpine AS frontend-build
+FROM node:26-alpine AS frontend-build
 ARG VERSION=dev
 ENV VITE_APP_VERSION=$VERSION
 WORKDIR /app/frontend
@@ -9,7 +9,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Runtime
-FROM python:3.12-slim
+FROM python:3.14-slim
 WORKDIR /app
 
 COPY backend/requirements.txt ./
@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./static
+# pushdeer.py loads the frontend i18n JSON at runtime so push messages stay
+# in sync with the UI. Copy the source JSON next to the backend.
+COPY frontend/src/locales ./locales
 
 ENV HOST=0.0.0.0
 ENV PORT=8500

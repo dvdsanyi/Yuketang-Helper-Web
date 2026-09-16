@@ -1,10 +1,14 @@
-import json, os, signal, subprocess, sys
+import json
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 PID_FILE = Path(__file__).resolve().parent / "logs" / "pids.json"
 
 
-def _kill(pid: int):
+def _kill(pid: int) -> None:
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

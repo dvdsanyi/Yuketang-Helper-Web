@@ -21,7 +21,6 @@
     "cancel": "返回"
   },
   "dashboard": {
-    "title": "仪表盘",
     "allCourses": "全部课程",
     "recentActivity": "最近活动",
     "noActivity": "暂无活动记录。课程开始后事件将显示在此处。",
@@ -46,6 +45,7 @@
     "apiKeyPlaceholder": "请输入 API 密钥",
     "keyNamePlaceholder": "自定义密钥名称",
     "addKey": "添加密钥",
+    "addKeyFailed": "添加失败",
     "use": "使用",
     "inUse": "使用中",
     "fallbackKeys": "API 密钥回退",
@@ -84,6 +84,7 @@
     "redPacket": "红包",
     "autoRedpacket": "自动抢红包",
     "applyToAll": "应用到全部",
+    "applyToAllFailed": "部分失败",
     "default": "默认设置",
     "pushdeerSettings": "PushDeer 设置",
     "pushdeerNotification": "手机推送（PushDeer）",
@@ -102,6 +103,15 @@
     "pollInterval": "轮询间隔",
     "pollIntervalDesc": "检查雨课堂是否开课的间隔。允许范围：{{min}}–{{max}} 秒（默认 {{default}} 秒）。值越小开课检测越快，但 API 请求越多。",
     "seconds": "秒"
+  },
+  "speech": {
+    "signin": "{{lesson}}已签到",
+    "problem_received": "{{lesson}}收到题目",
+    "problem_answered": "{{lesson}}已答题",
+    "problem_ai_failed": "{{lesson}}AI答题失败，请手动作答",
+    "call": "您被点名",
+    "danmu": "弹幕已发送",
+    "red_packet": "{{lesson}}已抢红包"
   },
   "accounts": {
     "title": "账号",

@@ -1,34 +1,11 @@
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 
 from config import http_request
 
 logger = logging.getLogger(__name__)
 
-
-SINGLE_CHOICE_PROMPT = (
-    "This image shows a single-choice question slide. "
-    "Read the question and all options from the image carefully. "
-    "Choose exactly ONE correct answer from: %s. "
-    "Reply with ONLY the option letter, nothing else."
-)
-
-MULTI_CHOICE_PROMPT = (
-    "This image shows a multiple-choice question slide. "
-    "Read the question and all options from the image carefully. "
-    "Choose ALL correct answers from: %s. "
-    "Reply with ONLY the option letters separated by commas, nothing else. "
-    "Example: A,C"
-)
-
-VOTE_PROMPT = (
-    "This image shows a voting question slide. "
-    "Read the question and all options from the image carefully. "
-    "Pick up to %d option(s) you judge most reasonable / most likely to be supported from: %s. "
-    "Reply with ONLY the option letter(s) separated by commas, nothing else. "
-    "Example: A,C"
-)
 
 SHORT_ANSWER_PROMPT = (
     "This image shows a short-answer question slide. "
@@ -38,7 +15,36 @@ SHORT_ANSWER_PROMPT = (
 )
 
 
-def _parse_letters(raw: str, options: List[str], max_count: Optional[int] = None) -> List[str]:
+def _single_choice_prompt(options_str: str) -> str:
+    return (
+        f"This image shows a single-choice question slide. "
+        f"Read the question and all options from the image carefully. "
+        f"Choose exactly ONE correct answer from: {options_str}. "
+        f"Reply with ONLY the option letter, nothing else."
+    )
+
+
+def _multi_choice_prompt(options_str: str) -> str:
+    return (
+        f"This image shows a multiple-choice question slide. "
+        f"Read the question and all options from the image carefully. "
+        f"Choose ALL correct answers from: {options_str}. "
+        f"Reply with ONLY the option letters separated by spaces, nothing else. "
+        f"Example: A C"
+    )
+
+
+def _vote_prompt(max_count: int, options_str: str) -> str:
+    return (
+        f"This image shows a voting question slide. "
+        f"Read the question and all options from the image carefully. "
+        f"Pick up to {max_count} option(s) you judge most reasonable / most likely to be supported from: {options_str}. "
+        f"Reply with ONLY the option letter(s) separated by spaces, nothing else. "
+        f"Example: A C"
+    )
+
+
+def _parse_letters(raw: str, options: list[str], max_count: Optional[int] = None) -> list[str]:
     option_map = {opt.upper(): opt for opt in options}
     parsed = [s.strip().upper() for s in re.split(r"[,\s]+", raw) if s.strip()]
     picked = [option_map[p] for p in parsed if p in option_map]
@@ -54,28 +60,23 @@ def _parse_letters(raw: str, options: List[str], max_count: Optional[int] = None
     return deduped
 
 
-def _choice_prompt(problem_type: int, options: List[str], count: Optional[int]) -> tuple[str, Optional[int]]:
-    """Returns (instruction, max_count) for the given option-style problem."""
+def _option_prompt(problem_type: int, options: list[str], max_count: int) -> str:
     options_str = ", ".join(options)
     if problem_type == 1:
-        return SINGLE_CHOICE_PROMPT % options_str, 1
+        return _single_choice_prompt(options_str)
+    if problem_type == 2:
+        return _multi_choice_prompt(options_str)
     if problem_type == 3:
-        n = max(1, int(count or 1))
-        return VOTE_PROMPT % (n, options_str), n
-    return MULTI_CHOICE_PROMPT % options_str, None
+        return _vote_prompt(max_count, options_str)
+    raise ValueError(f"Unsupported option problem type: {problem_type}")
 
 
 class AIProvider:
-    def _fetch_image(self, url: str) -> bytes:
-        resp = http_request("GET", url)
-        resp.raise_for_status()
-        return resp.content
-
     def _chat(self, cover_url: str, text: str) -> str:
         raise NotImplementedError
 
-    def answer_choice(self, cover_url: str, options: List[str], problem_type: int, count: Optional[int] = None) -> List[str]:
-        instruction, max_count = _choice_prompt(problem_type, options, count)
+    def answer_options(self, cover_url: str, options: list[str], problem_type: int, max_count: int) -> list[str]:
+        instruction = _option_prompt(problem_type, options, max_count)
         picked = _parse_letters(self._chat(cover_url, instruction), options, max_count=max_count)
         if not picked:
             raise ValueError("AI response did not contain any valid option letter")
@@ -92,6 +93,11 @@ class GeminiProvider(AIProvider):
         self.client = genai.Client(api_key=api_key)
         self.model = model
 
+    def _fetch_image(self, url: str) -> bytes:
+        resp = http_request("GET", url)
+        resp.raise_for_status()
+        return resp.content
+
     def _image_part(self, cover_url: str):
         from google.genai import types
         return types.Part.from_bytes(data=self._fetch_image(cover_url), mime_type="image/jpeg")
@@ -102,7 +108,7 @@ class GeminiProvider(AIProvider):
             contents=[self._image_part(cover_url), text],
         )
         content = (response.text or "").strip()
-        logger.info("Gemini response content: %s", content)
+        logger.info(f"Gemini response content: {content}")
         return content
 
 
@@ -125,7 +131,7 @@ class QwenProvider(AIProvider):
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         content = (response.choices[0].message.content or "").strip()
-        logger.info("Qwen response content: %s", content)
+        logger.info(f"Qwen response content: {content}")
         return content
 
 
@@ -135,10 +141,8 @@ _PROVIDERS = {
 }
 
 
-def create_provider(provider_name: str, api_key: str) -> Optional[AIProvider]:
-    if not api_key:
-        return None
+def create_provider(provider_name: str, api_key: str) -> AIProvider:
     cls = _PROVIDERS.get(provider_name)
     if cls is None:
-        return None
+        raise ValueError(f"Unknown AI provider: {provider_name!r}")
     return cls(api_key=api_key)

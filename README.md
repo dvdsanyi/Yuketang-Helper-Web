@@ -55,7 +55,7 @@
 
 > [!TIP]
 > 服务器部署可通过端口转发在本地浏览器访问；
-> 服务器推荐使用账号密码登录，以获得更长久的登录状态；
+> 雨课堂 Session 的有效期为 2 周；
 > 如需24小时服务器运行，可联系作者。
 
 ## 停止
@@ -142,7 +142,7 @@
 
 > [!TIP]
 > Server deployments can be accessed from a local browser via port forwarding;
-> Username/password login is recommended on servers for a more persistent session;
+> Yuketang Sessions are valid for 2 weeks;
 > Contact the author if you need a 24/7 server.
 
 ## Stop
