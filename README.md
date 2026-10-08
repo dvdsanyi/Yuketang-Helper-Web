@@ -1,6 +1,6 @@
 # 雨课堂助手 Web 版
 
-- 基于 [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) 和 THU-Yuketang-Helper
+- 基于 [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-zh-dark.png">
@@ -110,7 +110,7 @@ pyinstaller YuketangHelper.spec
 
 # Yuketang Helper Web
 
-- Based on [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) and THU-Yuketang-Helper
+- Based on [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-en-dark.png">
