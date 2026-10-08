@@ -1,12 +1,12 @@
-fastapi==0.136.1
-uvicorn[standard]==0.47.0
-websocket-client==1.9.0
+fastapi==0.142.4
+uvicorn[standard]==0.54.0
+websocket-client==1.9.2
 requests==2.34.2
-python-multipart==0.0.29
-pydantic==2.13.4
-google-genai==2.5.0
-openai==2.37.0
-certifi==2026.5.20
-pycryptodome==3.23.0
-platformdirs==4.9.6
-tzdata==2026.2; sys_platform == "win32"
+python-multipart==0.0.32
+pydantic==2.13.5
+google-genai==2.29.0
+openai==3.26.0
+certifi==2026.7.22
+pycryptodome==3.24.0
+platformdirs==4.12.4
+tzdata==2026.5; sys_platform == "win32"
