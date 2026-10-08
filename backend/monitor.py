@@ -126,6 +126,7 @@ class Monitor:
         don't keep hammering Yuketang, and tell the app to clear the login."""
         logger.warning(f"[{self.account_id}] Session expired: {message}")
         self._emit("session_expired", {"message": message or "Session expired"})
+        pushdeer.send_session_expired(self.account_id)
         with self._lock:
             lessons = list(self._active_lessons.values())
             self._active_lessons.clear()

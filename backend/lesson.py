@@ -27,8 +27,16 @@ URL_REDENVELOPE_PREPARE = "https://{domain}/api/v3/lesson/redenvelope/prepare"
 _ANSWER_ATTEMPTS = 3
 _ANSWER_TIMEOUT = 3
 # Upper bound on how long we wait for an AI answer when the problem carries no
-# deadline of its own. Without it a hung provider means no answer at all.
-_AI_MAX_WAIT = 120.0
+# deadline of its own. Without it a hung provider means no answer at all, and
+# teachers often close untimed problems within a minute or two.
+_AI_MAX_WAIT = 45.0
+# "Answer near deadline" submits this many seconds before the deadline. The
+# margin absorbs a slow or retried submit; 1-5s lost answers to one hiccup.
+_DEADLINE_LEAD = (10.0, 15.0)
+# Connections in a row that deliver no frame before we log a warning: the
+# lesson token from check-in is reused on every reconnect, and if Yuketang
+# stops accepting it we would reconnect forever without seeing a problem.
+_SILENT_CONNECTIONS_WARN = 3
 # Rejected submissions before we stop retrying a problem. Transient errors
 # clear in a try or two; retrying forever would hammer Yuketang on every frame.
 _MAX_SUBMIT_FAILS = 3
@@ -88,6 +96,13 @@ class Lesson:
         # `unlockedproblem` when we couldn't even resolve which problem it is.
         self._failures: dict[Any, int] = {}
         self._answered_lock = threading.Lock()
+        # problemIds we've told the user we won't answer, so each gets one notice.
+        self._skip_notified: set = set()
+        # Seconds to add to the local clock to get Yuketang's. Only ever moves
+        # forward: a frame's `dt` is at or before the server's "now", and
+        # underestimating the time left is the safe direction.
+        self._server_offset = 0.0
+        self._frames = 0  # frames received on the current connection
 
         self.user_uid: Optional[int] = None
         self.user_uname: Optional[str] = None
@@ -119,7 +134,9 @@ class Lesson:
 
         # Yuketang closes the WS every ~40-60s while class is still live.
         # Reconnect on a fixed 1s delay until external stop or `lessonfinished`.
+        silent = 0
         while self._is_running():
+            self._frames = 0
             self.wsapp = websocket.WebSocketApp(
                 url=api_url(self.domain, URL_WSS),
                 header=self.headers,
@@ -129,6 +146,12 @@ class Lesson:
             self.wsapp.run_forever(ping_interval=30, ping_timeout=10)
             if not self._is_running():
                 break
+            silent = silent + 1 if self._frames == 0 else 0
+            if silent >= _SILENT_CONNECTIONS_WARN:
+                logger.warning(
+                    f"[{self.account_id}][WS {self.lessonname}] {silent} connections in a row delivered "
+                    f"no frames; the lesson token may no longer be accepted"
+                )
             logger.info(f"[{self.account_id}][WS {self.lessonname}] disconnected, reconnecting in 1s")
             time.sleep(1)
 
@@ -225,12 +248,12 @@ class Lesson:
     # Problem bookkeeping
     # ------------------------------------------------------------------
 
-    def _fetch_presentation(self, presentation_id: Any) -> None:
+    def _fetch_presentation(self, presentation_id: Any, attempts: int = _ANSWER_ATTEMPTS, timeout: int = 4) -> None:
         """(Re-)load a presentation's problems into `_problems`. Always re-reads:
         one cheap GET refreshes each problem's `result`, which is how we know a
         problem was answered elsewhere and must not be overwritten."""
         r = http_request("GET", api_url(self.domain, URL_PRESENTATION_FETCH, presentation_id=presentation_id),
-                         headers=self.headers, attempts=_ANSWER_ATTEMPTS, timeout=4)
+                         headers=self.headers, attempts=attempts, timeout=timeout)
         for slide in r.json()["data"].get("slides", []):
             problem = slide.get("problem")
             if not problem:
@@ -252,8 +275,41 @@ class Lesson:
             except Exception as e:
                 logger.warning(f"[{self.account_id}] presentation {pid} fetch failed: {e}")
 
+    def _refreshed(self, problem: dict, timeout: int) -> dict:
+        """Re-read one problem from its presentation, or the cached copy if that
+        fails. A single attempt: callers are racing a deadline."""
+        try:
+            self._fetch_presentation(problem["_pres"], attempts=1, timeout=timeout)
+        except Exception as e:
+            logger.warning(f"[{self.account_id}] presentation {problem['_pres']} refresh failed: {e}")
+        return self._problems.get(problem["problemId"], problem)
+
     def _mode_for(self, problem: dict) -> str:
         return self.course_config.get(f"type{problem['problemType']}", "off")
+
+    def _skip_reason(self, problem: dict) -> Optional[str]:
+        if problem["problemType"] not in (1, 2, 3, 5):
+            return "unsupported"
+        if self._mode_for(problem) == "off":
+            return "off"
+        return None
+
+    def _notify_skipped(self, problem: dict, reason: str) -> None:
+        """Tell the user, once per problem, that we won't answer it, so nothing
+        sits unanswered without an explanation. `reason` is "unsupported",
+        "off" (type turned off) or "answered" (answered by hand while we held)."""
+        problemid = problem["problemId"]
+        if problemid in self._skip_notified:
+            return
+        self._skip_notified.add(problemid)
+        self.on_event("problem", {
+            "lesson": self.lessonname,
+            "lessonid": self.lessonid,
+            "problemid": problemid,
+            "problemtype": problem["problemType"],
+            "status": "skipped",
+            "message": reason,
+        })
 
     def _remaining_limit(self, problem: dict) -> int:
         """Seconds left on a problem's own clock, from the presentation data.
@@ -262,7 +318,7 @@ class Lesson:
         sent_ms = int(float(problem.get("sendTime") or 0))
         if limit <= 0 or sent_ms <= 0:
             return 0
-        return max(0, int(sent_ms / 1000 + limit - time.time()))
+        return max(0, int(sent_ms / 1000 + limit - (time.time() + self._server_offset)))
 
     def _claim(self, problemid: Any) -> bool:
         """Take ownership of answering a problem. False means it's already
@@ -290,7 +346,9 @@ class Lesson:
             # Answered already (by us on a previous run, or by hand elsewhere).
             self._claim(problemid)
             return
-        if self._mode_for(problem) == "off":
+        reason = self._skip_reason(problem)
+        if reason:
+            self._notify_skipped(problem, reason)
             return
         if not self._claim(problemid):
             return
@@ -316,7 +374,10 @@ class Lesson:
                 with self._answered_lock:
                     if problem["problemId"] in self._answered:
                         continue
-                if self._mode_for(problem) == "off":
+                reason = self._skip_reason(problem)
+                if reason:
+                    if problem.get("result") is None:
+                        self._notify_skipped(problem, reason)
                     continue
             # Unknown, or known-but-unanswered: re-read from the server so we
             # act on a fresh `result` and pick up problems we never fetched.
@@ -390,7 +451,15 @@ class Lesson:
         if not keys_to_try:
             raise RuntimeError("No AI provider available")
 
+        if not problem.get("_cover"):
+            # A presentation fetched while still rendering (`presentationcreated`
+            # arrives with `datacompleted: false`) can lack its slide images.
+            problem = self._refreshed(problem, timeout=4)
         cover_url = problem.get("_cover", "")
+        if not cover_url:
+            # Providers read the question off the slide image; without one
+            # every key would fail, so go straight to the fallback answer.
+            raise RuntimeError("slide has no cover image")
         problemtype = problem["problemType"]
         last_error: Optional[Exception] = None
 
@@ -404,24 +473,28 @@ class Lesson:
                 return provider.answer_options(cover_url, option_keys, problemtype, max_count)
             except Exception as e:
                 logger.warning(
-                    f"[{self.account_id}] AI call failed with key {attempt.name!r} ({attempt.provider}), trying next: {e}"
+                    f"[{self.account_id}] AI call failed with key {attempt.name!r} ({attempt.provider}) "
+                    f"for cover {cover_url}, trying next: {e}"
                 )
                 last_error = e
 
-        raise RuntimeError("All AI providers failed") from last_error
+        raise RuntimeError(f"All AI providers failed: {last_error}") from last_error
 
     # ------------------------------------------------------------------
     # Answer submission
     # ------------------------------------------------------------------
     #
-    # Timing (see `_submit_window`), by mode and the `answer_last5s` toggle:
-    #   random/blank — last5s ON + deadline → submit in the last 1-5s window;
-    #                  otherwise submit immediately.
-    #   ai           — last5s ON + deadline → wait for AI until that window,
-    #                  then submit whatever we have (AI answer or fallback);
-    #                  last5s OFF + deadline → submit as soon as AI returns,
-    #                  capped at `limit - 1s` so the fallback still fits;
+    # Timing (see `_submit_window`), by mode and the "answer near deadline"
+    # toggle (`answer_last5s` in the config):
+    #   random/blank — near-deadline ON + deadline → submit `_DEADLINE_LEAD`
+    #                  seconds before the deadline; otherwise immediately.
+    #   ai           — near-deadline ON + deadline → wait for AI until that
+    #                  point, then submit whatever we have (AI or fallback);
+    #                  near-deadline OFF + deadline → submit as soon as AI
+    #                  returns, capped at `limit - 1s` so the fallback fits;
     #                  no deadline → wait up to `_AI_MAX_WAIT`.
+    # After any deliberate hold we re-read the problem first, so an answer the
+    # user gave by hand in the meantime is never replaced.
 
     def _submit_answer(self, problemid: Any, problemtype: int, real_answer: str | list[str], source: str) -> bool:
         """POST one answer. Returns True once Yuketang accepts it; a False
@@ -461,7 +534,7 @@ class Lesson:
         """Compute ``(min_hold, max_wait)`` seconds, measured from problem receipt.
 
         - ``min_hold`` — earliest submit time. Caller must hold this long
-          before submitting (so the last-5s gate is honoured).
+          before submitting (so the near-deadline gate is honoured).
         - ``max_wait`` — how long to wait for the AI response before falling
           back. Non-AI modes ignore it.
         """
@@ -469,13 +542,13 @@ class Lesson:
             # No deadline known: submit immediately for fallback modes; AI mode
             # waits for the provider, bounded so a hang can't eat the answer.
             return (0.0, _AI_MAX_WAIT)
-        if self.course_config.get("answer_last5s", True):
-            target = max(0.0, limit - random.uniform(1, min(5, limit)))
+        if self.course_config.get("answer_last5s", False):
+            target = max(0.0, limit - random.uniform(*_DEADLINE_LEAD))
             return (target, target)
         if mode == "ai":
             # Submit ASAP once AI returns; keep ~1s buffer for fallback.
             return (0.0, max(0.5, float(limit - 1)))
-        # Non-AI + last5s off + has deadline: submit immediately.
+        # Non-AI + near-deadline off + has deadline: submit immediately.
         return (0.0, 0.0)
 
     def _answer_problem(self, problem: dict, limit: int) -> None:
@@ -500,21 +573,33 @@ class Lesson:
                     self._answered.discard(problemid)
                     self._failures[problemid] = self._failures.get(problemid, 0) + 1
 
+    def _answered_by_hand(self, problem: dict) -> bool:
+        """After a deliberate hold, check whether the user answered by hand in
+        the meantime. A failed read counts as "no": submitting beats dropping
+        the answer."""
+        if self._refreshed(problem, timeout=2).get("result") is None:
+            return False
+        self._notify_skipped(problem, "answered")
+        return True
+
     def _submit_fallback(self, problem: dict, problemid: Any, problemtype: int, limit: int, start_time: float) -> bool:
         """Build and submit a non-AI (random/blank) answer, honoring the
-        last-5s hold window. Shared by fallback modes and the AI no-key path."""
+        near-deadline hold. Shared by fallback modes and the AI no-key path."""
         answers, source = self._build_fallback_answer(problem, problemtype)
         min_hold, _ = self._submit_window(limit, source)
         self._hold(min_hold - (time.time() - start_time))
+        if min_hold > 0 and self._answered_by_hand(problem):
+            return True
         return self._submit_answer(problemid, problemtype, answers, source)
 
-    def _emit_ai_failed(self, problemid: Any, problemtype: int) -> None:
+    def _emit_ai_failed(self, problemid: Any, problemtype: int, message: str) -> None:
         self.on_event("problem", {
             "lesson": self.lessonname,
             "lessonid": self.lessonid,
             "problemid": problemid,
             "problemtype": problemtype,
             "status": "ai_failed",
+            "message": message,
         })
 
     def _answer_via_ai(self, problem: dict, problemid: Any, problemtype: int, limit: int, start_time: float) -> bool:
@@ -524,17 +609,18 @@ class Lesson:
             return self._submit_fallback(problem, problemid, problemtype, limit, start_time)
 
         result_holder: list[Any] = [None]
+        # Set only when the AI call raised; the message rides on the ai_failed event.
+        error_holder: list[Optional[str]] = [None]
         ai_done = threading.Event()
-        ai_failed_event = threading.Event()
 
         logger.info(f"[{self.account_id}] Attempting AI answer for problem {problemid}")
 
         def _call_ai():
             try:
                 result_holder[0] = self._build_ai_answers(problem, keys_to_try)
-            except Exception:
+            except Exception as e:
                 logger.exception(f"[{self.account_id}] AI answering failed for problem {problemid}")
-                ai_failed_event.set()
+                error_holder[0] = str(e) or type(e).__name__
             finally:
                 ai_done.set()
 
@@ -547,18 +633,20 @@ class Lesson:
 
         # Fire ai_failed notification as soon as AI raises, so users can intervene before the fallback submit.
         notification_sent = False
-        if ai_failed_event.is_set() and result_holder[0] is None:
-            self._emit_ai_failed(problemid, problemtype)
+        if error_holder[0] is not None and result_holder[0] is None:
+            self._emit_ai_failed(problemid, problemtype, error_holder[0])
             notification_sent = True
 
-        # Hold until the earliest allowed submit time (last-5s gate).
+        # Hold until the earliest allowed submit time (near-deadline gate).
         self._hold(min_hold - (time.time() - start_time))
+        if min_hold > 0 and self._answered_by_hand(problem):
+            return True
         if result_holder[0] is not None:
             return self._submit_answer(problemid, problemtype, result_holder[0], "ai")
 
         # AI failed — emit notification (if not already sent) and submit fallback.
         if not notification_sent:
-            self._emit_ai_failed(problemid, problemtype)
+            self._emit_ai_failed(problemid, problemtype, error_holder[0] or "AI did not answer in time")
         fallback_answer, fallback_source = self._build_fallback_answer(problem, problemtype)
         return self._submit_answer(problemid, problemtype, fallback_answer, fallback_source)
 
@@ -599,6 +687,7 @@ class Lesson:
         }))
 
     def _on_message(self, wsapp: websocket.WebSocketApp, message: str) -> None:
+        self._frames += 1
         try:
             self._dispatch(json.loads(message))
         except Exception:
@@ -609,6 +698,12 @@ class Lesson:
     def _dispatch(self, data: dict) -> None:
         op = data.get("op", "")
         logger.info(f"[{self.account_id}][WS {self.lessonname}] op={op}")
+
+        # Frames carry server timestamps; keep the clock offset current.
+        problem_ref = data.get("problem")
+        dt = data.get("dt") or (problem_ref.get("dt") if isinstance(problem_ref, dict) else None)
+        if isinstance(dt, (int, float)) and dt > 0:
+            self._server_offset = max(self._server_offset, dt / 1000 - time.time())
 
         if op == "hello":
             # Re-read every presentation on each (re)connect: refreshes `result`

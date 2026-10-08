@@ -34,6 +34,38 @@
     Arial, 'Noto Sans', sans-serif;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   --transition: 150ms ease;
+  color-scheme: light dark;
+}
+
+/* Dark mode follows the system setting. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #111318;
+    --color-bg-subtle: #16181e;
+    --color-surface: #1b1e25;
+    --color-border: #2e3440;
+    --color-text: #e6e8ec;
+    --color-text-muted: #8f97a5;
+    --color-text-secondary: #b6bcc7;
+    --color-primary: #5b7bfa;
+    --color-primary-hover: #7a94fb;
+    --color-primary-light: rgba(91, 123, 250, 0.18);
+    --color-primary-soft: rgba(91, 123, 250, 0.08);
+    --color-success: #48bb78;
+    --color-success-bg: rgba(72, 187, 120, 0.14);
+    --color-danger: #f56565;
+    --color-danger-bg: rgba(245, 101, 101, 0.14);
+    --color-warning: #ecc94b;
+    --color-warning-bg: rgba(236, 201, 75, 0.12);
+    --color-warning-border: rgba(236, 201, 75, 0.35);
+    --color-warning-text: #f6e05e;
+    --color-gray: #8f97a5;
+    --color-gray-bg: #272b34;
+    --color-nav-bg: #16181e;
+    --color-nav-border: #2e3440;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
 }
 
 /* ===========================
@@ -354,12 +386,6 @@ button:disabled {
   color: var(--color-success);
 }
 
-.success-icon {
-  font-size: 40px;
-  color: var(--color-success);
-  font-weight: 700;
-}
-
 /* ===========================
    Spinner
    =========================== */
@@ -449,6 +475,37 @@ button:disabled {
   border-bottom: none;
 }
 
+/* Takes the leftover width and lets a long name truncate instead of
+   stretching the table. */
+.data-table .cell-fill {
+  width: 100%;
+  max-width: 0;
+}
+
+.data-table th,
+.data-table td:not(.cell-fill) {
+  white-space: nowrap;
+}
+
+.truncate-middle {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.truncate-middle > span {
+  white-space: pre;
+}
+
+.truncate-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.truncate-tail {
+  flex-shrink: 0;
+}
+
 .data-table tr:hover td {
   background: var(--color-bg);
 }
@@ -487,6 +544,13 @@ button:disabled {
   color: var(--color-text);
   flex: 1;
   word-break: break-word;
+}
+
+.activity-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
 
 /* ===========================
@@ -534,6 +598,7 @@ button:disabled {
 }
 
 .course-card {
+  min-width: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -548,6 +613,7 @@ button:disabled {
 }
 
 .course-card-title {
+  display: flex;
   font-size: 14px;
   font-weight: 600;
   color: var(--color-text);
@@ -755,7 +821,6 @@ button:disabled {
 }
 
 .tooltip-trigger {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -776,12 +841,21 @@ button:disabled {
   color: var(--color-surface);
 }
 
+/* Tooltips anchor to the hovered trigger: centered above it, shifted to stay
+   on screen, flipped below when there's no room above. Only the hovered
+   trigger carries the anchor name, so the name is always unique. */
+.tooltip-trigger:hover,
+.switch-wrap[data-tooltip]:hover {
+  anchor-name: --tooltip;
+}
+
 .tooltip-trigger[data-tooltip]::after {
   content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: fixed;
+  position-anchor: --tooltip;
+  position-area: top;
+  position-try-fallbacks: flip-block;
+  margin: 6px 8px;
   padding: 8px 12px;
   background: var(--color-text);
   color: var(--color-surface);
@@ -805,10 +879,11 @@ button:disabled {
 /* Table-variant popup: rendered as a child element so it can host real markup
    (a <table>) instead of plain text via attr(). */
 .tooltip-table-popup {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: fixed;
+  position-anchor: --tooltip;
+  position-area: top;
+  position-try-fallbacks: flip-block;
+  margin: 6px 8px;
   padding: 10px 12px;
   background: var(--color-text);
   color: var(--color-surface);
@@ -817,7 +892,7 @@ button:disabled {
   line-height: 1.45;
   border-radius: var(--radius-sm);
   width: max-content;
-  max-width: min(560px, 92vw);
+  max-width: min(560px, calc(100vw - 16px));
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.15s;
@@ -845,7 +920,7 @@ button:disabled {
   padding: 4px 8px;
   text-align: left;
   vertical-align: top;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   white-space: nowrap;
 }
 
@@ -889,21 +964,64 @@ button:disabled {
   overflow: hidden;
 }
 
-.toggle-group-wrap {
+.switch-wrap {
   display: inline-flex;
 }
 
-.toggle-group-wrap[data-tooltip] {
+.switch {
+  appearance: none;
   position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--color-border);
+  cursor: pointer;
+  transition: background-color var(--transition);
+}
+
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: translate var(--transition);
+}
+
+.switch:checked {
+  background: var(--color-primary);
+}
+
+.switch:checked::before {
+  translate: 16px 0;
+}
+
+.switch:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-.toggle-group-wrap[data-tooltip]::after {
+.switch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.switch-wrap[data-tooltip] {
+  cursor: not-allowed;
+}
+
+.switch-wrap[data-tooltip]::after {
   content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: fixed;
+  position-anchor: --tooltip;
+  position-area: top;
+  position-try-fallbacks: flip-block;
+  margin: 6px 8px;
   padding: 8px 12px;
   background: var(--color-text);
   color: var(--color-surface);
@@ -920,7 +1038,7 @@ button:disabled {
   z-index: 100;
 }
 
-.toggle-group-wrap[data-tooltip]:hover::after {
+.switch-wrap[data-tooltip]:hover::after {
   opacity: 1;
 }
 
@@ -966,7 +1084,11 @@ button:disabled {
   font-size: 12px;
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  opacity: 0.7;
+}
+
+a.app-footer-version:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
 }
 
 .app-footer-link {
@@ -1050,9 +1172,6 @@ button:disabled {
 
 .account-name {
   max-width: 10em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .account-caret {
@@ -1115,9 +1234,6 @@ button:disabled {
 .account-row-name {
   font-size: 14px;
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .account-row-sub {

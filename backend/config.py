@@ -64,7 +64,7 @@ VALID_DOMAINS = {option["key"] for option in DOMAIN_OPTIONS}
 # Yuketang; upper bound stops typos turning the monitor into a no-op.
 MIN_POLL_INTERVAL = 10
 MAX_POLL_INTERVAL = 3600
-DEFAULT_POLL_INTERVAL = 60
+DEFAULT_POLL_INTERVAL = 30
 
 ChoiceAnswerMode = Literal["ai", "random", "off"]
 ShortAnswerMode = Literal["ai", "blank", "off"]
@@ -99,7 +99,10 @@ class CourseSettingsModel(BaseModel):
     type4: Literal["off"] = "off"
     type5: ShortAnswerMode = "ai"
     course_enabled: bool = True
-    answer_last5s: bool = True
+    # "Answer near deadline": hold submissions until shortly before the
+    # deadline. Off by default; a teacher closing a problem early would
+    # otherwise leave it unanswered.
+    answer_last5s: bool = False
     auto_danmu: bool = True
     auto_redpacket: bool = True
     danmu_threshold: PositiveInt = 3

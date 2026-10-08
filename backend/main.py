@@ -4,6 +4,7 @@ import mimetypes
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -14,25 +15,32 @@ from fastapi.staticfiles import StaticFiles
 import pushdeer
 import state
 from auth import refresh_local_cache, start_monitor
-from config import delete_account, list_accounts_summary
+from config import STORE_DIR, list_accounts_summary
 from routers import accounts, ai, courses, domains, events, login, pushdeer_router
 
 # ---------------------------------------------------------------------------
-# Logging — single shared handler attached to root + uvicorn loggers so the
-# timestamp format stays consistent across access/error/app logs. Timestamps
-# are local time, matching event_log.append() and PushDeer messages.
+# Logging — shared console + file handlers attached to root + uvicorn loggers
+# so the timestamp format stays consistent across access/error/app logs.
+# Timestamps are local time, matching event_log.append() and PushDeer messages.
+# The file lives under STORE_DIR so it survives restarts and Docker updates.
 # ---------------------------------------------------------------------------
 
 
-_LOG_HANDLER = logging.StreamHandler()
-_LOG_HANDLER.setFormatter(logging.Formatter(
-    fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-))
-logging.basicConfig(level=logging.INFO, handlers=[_LOG_HANDLER], force=True)
+_LOG_DIR = STORE_DIR / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+_LOG_HANDLERS: list[logging.Handler] = [
+    logging.StreamHandler(),
+    RotatingFileHandler(_LOG_DIR / "app.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"),
+]
+for _handler in _LOG_HANDLERS:
+    _handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    ))
+logging.basicConfig(level=logging.INFO, handlers=_LOG_HANDLERS, force=True)
 for _name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
     _uv = logging.getLogger(_name)
-    _uv.handlers = [_LOG_HANDLER]
+    _uv.handlers = list(_LOG_HANDLERS)
     _uv.propagate = False
 
 
@@ -105,15 +113,9 @@ async def lifespan(app: FastAPI):
     broadcaster = asyncio.create_task(_broadcast_events())
     heartbeat_task = asyncio.create_task(_pushdeer_heartbeat_scheduler())
 
-    # Sweep legacy `pending-*` accounts and start monitors for the rest in a
-    # single pass. `pending-*` was persisted by pre-2025 versions; in-memory
-    # pending slots have since replaced that, so any on-disk ones are stale.
     startup_log = logging.getLogger("startup")
     for summary in list_accounts_summary():
         aid = summary["id"]
-        if aid.startswith("pending-"):
-            delete_account(aid)
-            continue
         if not summary["logged_in"]:
             continue
         try:

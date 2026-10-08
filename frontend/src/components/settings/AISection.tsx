@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AIKeyEntry, AISettings, AIProviderName } from '../../types'
+import MiddleTruncate from '../MiddleTruncate'
+import Switch from '../Switch'
 
 const PROVIDER_LABELS: Record<string, string> = {
   google: 'Google',
@@ -73,7 +75,7 @@ export default function AISection({
             {ai.keys.map((entry, idx) => (
               <div key={idx} className={`credential-item ${idx === ai.active_key ? 'credential-active' : ''}`}>
                 <div className="credential-info">
-                  <span className="credential-name">{entry.name}</span>
+                  <MiddleTruncate className="credential-name" text={entry.name} />
                   <span className="credential-meta">{PROVIDER_LABELS[entry.provider] ?? entry.provider}</span>
                   <span className="credential-masked">{entry.key}</span>
                 </div>
@@ -99,20 +101,7 @@ export default function AISection({
               {t('settings.fallbackKeys')}
               <span className="tooltip-trigger" data-tooltip={t('settings.fallbackKeysDesc')}>?</span>
             </label>
-            <div className="toggle-group">
-              <button
-                className={`toggle-option ${ai.fallback_keys ? 'selected' : ''}`}
-                onClick={() => handleToggleFallback(true)}
-              >
-                {t('common.on')}
-              </button>
-              <button
-                className={`toggle-option ${!ai.fallback_keys ? 'selected' : ''}`}
-                onClick={() => handleToggleFallback(false)}
-              >
-                {t('common.off')}
-              </button>
-            </div>
+            <Switch label={t('settings.fallbackKeys')} checked={ai.fallback_keys} onChange={handleToggleFallback} />
           </div>
         )}
 

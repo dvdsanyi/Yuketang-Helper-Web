@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Language, PushdeerKeyEntry, PushdeerSettings } from '../../types'
+import MiddleTruncate from '../MiddleTruncate'
 
 type TestState = { status: 'idle' | 'testing' | 'success' | 'error'; message: string }
 const IDLE: TestState = { status: 'idle', message: '' }
@@ -101,7 +102,7 @@ export default function PushdeerSection({
               return (
                 <div key={idx} className={`credential-item ${idx === pushdeer.active_key ? 'credential-active' : ''}`}>
                   <div className="credential-info">
-                    <span className="credential-name">{entry.name}</span>
+                    <MiddleTruncate className="credential-name" text={entry.name} />
                     <span className="credential-meta">{entry.endpoint}</span>
                     <span className="credential-masked">{entry.push_key}</span>
                   </div>

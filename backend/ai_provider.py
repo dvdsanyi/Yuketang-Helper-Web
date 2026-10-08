@@ -6,6 +6,10 @@ from config import http_request
 
 logger = logging.getLogger(__name__)
 
+# Per-call cap, no SDK retries: a hung provider must fail fast enough for the
+# next key to get a turn before the submission window closes.
+_TIMEOUT = 20
+
 
 SHORT_ANSWER_PROMPT = (
     "This image shows a short-answer question slide. "
@@ -90,11 +94,12 @@ class GeminiProvider(AIProvider):
 
     def __init__(self, api_key: str, model: str = "gemini-flash-latest"):
         from google import genai
-        self.client = genai.Client(api_key=api_key)
+        from google.genai import types
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=_TIMEOUT * 1000))
         self.model = model
 
     def _fetch_image(self, url: str) -> bytes:
-        resp = http_request("GET", url)
+        resp = http_request("GET", url, attempts=1, timeout=5)
         resp.raise_for_status()
         return resp.content
 
@@ -118,7 +123,7 @@ class QwenProvider(AIProvider):
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
         from openai import OpenAI
-        self.client = OpenAI(base_url=self.BASE_URL, api_key=api_key)
+        self.client = OpenAI(base_url=self.BASE_URL, api_key=api_key, timeout=_TIMEOUT, max_retries=0)
         self.model = model
 
     def _chat(self, cover_url: str, text: str) -> str:
@@ -130,6 +135,10 @@ class QwenProvider(AIProvider):
             ]}],
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
+        # ModelScope reports some failures (e.g. a request without a usable
+        # image) as HTTP 200 with `choices: null`, which the SDK passes through.
+        if not response.choices:
+            raise RuntimeError("ModelScope returned no answer (choices is null)")
         content = (response.choices[0].message.content or "").strip()
         logger.info(f"Qwen response content: {content}")
         return content

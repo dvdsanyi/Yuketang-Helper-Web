@@ -10,6 +10,7 @@ node_modules/
 logs/
 store/
 api_usage_example/
+docs/
 note.md
 start.py
 stop.py

@@ -10,6 +10,9 @@ import AccountSwitcher from './components/AccountSwitcher'
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive ? 'nav-link active' : 'nav-link'
 
+const REPO_URL = 'https://github.com/dvdsanyi/Yuketang-Helper-Web'
+const VERSION = import.meta.env.VITE_APP_VERSION
+
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { loading, state, activeAccount } = useAccounts()
   if (loading) {
@@ -108,7 +111,7 @@ function AppInner() {
       <footer className="app-footer">
         <a
           className="app-footer-link"
-          href="https://github.com/dvdsanyi/Yuketang-Helper-Web"
+          href={REPO_URL}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="GitHub"
@@ -127,7 +130,18 @@ function AppInner() {
           </svg>
           <span>dvdsanyi/Yuketang-Helper-Web</span>
         </a>
-        <span className="app-footer-version">{import.meta.env.VITE_APP_VERSION || 'dev'}</span>
+        {VERSION ? (
+          <a
+            className="app-footer-version"
+            href={`${REPO_URL}/releases/tag/${VERSION}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {VERSION}
+          </a>
+        ) : (
+          <span className="app-footer-version">dev</span>
+        )}
       </footer>
     </div>
   )

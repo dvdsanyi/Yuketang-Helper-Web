@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import type { CourseItem, NotificationSub } from '../types'
 import { useAccounts } from '../hooks/useAccounts'
+import MiddleTruncate from '../components/MiddleTruncate'
 
 interface ActiveLesson {
   lessonid: number
@@ -66,38 +67,36 @@ function answersText(answers: unknown): string {
   return String(answers)
 }
 
-// Per-event-type formatter. Keep in sync with backend/pushdeer.py:_format_label.
-type Fmt = (event: ActivityEvent, t: TFunction, parts: { lesson: string; typeName: string }) => string
+// Row text is the lesson plus details; the badge already names the event type.
+// Keep in sync with backend/pushdeer.py:_format_label.
+type Fmt = (event: ActivityEvent, t: TFunction) => string
 
-const FORMATTERS: Record<string, Fmt> = {
-  signin: (e, t, p) => `${p.lesson}${p.typeName}: ${t(`events.${e.status || 'success'}`)}`,
-  problem_received: (_e, _t, p) => `${p.lesson}${p.typeName}`,
-  problem: (e, t, p) => {
-    const problemTypeName = e.problemtype ? t(`events.problemType${e.problemtype}`) : p.typeName
-    if (e.status === 'ai_failed') return `${p.lesson}${problemTypeName}: ${t('events.ai_failed')}`
-    const statusText = t(`events.${e.status || 'success'}`)
+const statusText: Fmt = (e, t) => t(`events.${e.status || 'success'}`)
+const nothing: Fmt = () => ''
+
+const DETAILS: Record<string, Fmt> = {
+  signin: statusText,
+  red_packet: statusText,
+  problem: (e, t) => {
+    if (e.status === 'ai_failed') return t('events.ai_failed')
+    if (e.status === 'skipped') return t(`events.skip_${e.message}`)
     const text = answersText(e.answers)
-    const sourceText = e.source ? ` [${t(`events.source_${e.source}`)}]` : ''
     const answerSuffix = text ? `, ${t('events.answer')}: ${text}` : ''
-    return `${p.lesson}${problemTypeName}: ${statusText}${answerSuffix}${sourceText}`
+    const sourceText = e.source ? ` [${t(`events.source_${e.source}`)}]` : ''
+    return `${statusText(e, t)}${answerSuffix}${sourceText}`
   },
-  danmu: (e, t, p) => `${p.lesson}${p.typeName}: "${e.content || ''}" — ${t(`events.${e.status || 'success'}`)}`,
-  call: (_e, _t, p) => `${p.lesson}${p.typeName}`,
-  red_packet: (e, t, p) => `${p.lesson}${p.typeName}: ${t(`events.${e.status || 'success'}`)}`,
-  session_expired: (_e, _t, p) => p.typeName,
-  lesson_end: (_e, _t, p) => `${p.lesson}${p.typeName}`,
-  lesson_start: (_e, _t, p) => `${p.lesson}${p.typeName}`,
+  danmu: (e, t) => `"${e.content || ''}" — ${statusText(e, t)}`,
+  session_expired: (_e, t) => t('events.session_expired_hint'),
+  problem_received: nothing,
+  call: nothing,
+  lesson_start: nothing,
+  lesson_end: nothing,
 }
 
 function formatEventLabel(event: ActivityEvent, t: TFunction): string {
-  // i18next returns the key itself on a miss, so no `|| event.type` fallback needed.
-  const parts = {
-    lesson: event.lesson ? `[${event.lesson}] ` : '',
-    typeName: t(`events.${event.type}`),
-  }
-  const fmt = FORMATTERS[event.type]
-  if (fmt) return fmt(event, t, parts)
-  return `${parts.lesson}${parts.typeName}${event.message ? ': ' + event.message : ''}`
+  const detail = (DETAILS[event.type] ?? ((e: ActivityEvent) => e.message || ''))(event, t)
+  if (!event.lesson) return detail
+  return detail ? `${event.lesson}: ${detail}` : event.lesson
 }
 
 // Speech text via i18n — see locales/*.json "speech".
@@ -107,9 +106,9 @@ function buildSpeechText(event: ActivityEvent, t: TFunction): string {
     case 'signin':           return t('speech.signin', { lesson })
     case 'problem_received': return t('speech.problem_received', { lesson })
     case 'problem':
-      return event.status === 'ai_failed'
-        ? t('speech.problem_ai_failed', { lesson })
-        : t('speech.problem_answered', { lesson })
+      if (event.status === 'ai_failed') return t('speech.problem_ai_failed', { lesson })
+      if (event.status === 'skipped') return event.message === 'answered' ? '' : t('speech.problem_skipped', { lesson })
+      return t('speech.problem_answered', { lesson })
     case 'call':             return t('speech.call')
     case 'danmu':            return t('speech.danmu')
     case 'red_packet':       return t('speech.red_packet', { lesson })
@@ -117,9 +116,15 @@ function buildSpeechText(event: ActivityEvent, t: TFunction): string {
   }
 }
 
+// Failed events carry their cause in `message`; shown under the row and
+// appended to PushDeer pushes (backend/pushdeer.py:format_event).
+function failureReason(event: ActivityEvent): string {
+  return event.status === 'error' || event.status === 'ai_failed' ? event.message || '' : ''
+}
+
 function eventBadgeClass(event: ActivityEvent): string {
   if (event.type === 'session_expired') return 'badge badge-red'
-  if (event.type === 'lesson_end') return 'badge badge-gray'
+  if (event.type === 'lesson_end' || event.status === 'skipped') return 'badge badge-gray'
   if (event.type === 'lesson_start') return 'badge badge-green'
   if (event.type === 'red_packet') return event.status === 'success' ? 'badge badge-green' : 'badge badge-red'
   if (event.type === 'problem_received') return 'badge badge-blue'
@@ -319,7 +324,7 @@ export default function Dashboard() {
             <tbody>
               {allCourses.map((course) => (
                 <tr key={course.classroom_id}>
-                  <td>{course.name}</td>
+                  <td className="cell-fill"><MiddleTruncate text={course.name} /></td>
                   <td>{course.teacher_name ?? t('common.unknown')}</td>
                   <td>
                     <span className={`badge ${course.active ? 'badge-green' : 'badge-gray'}`}>
@@ -347,7 +352,12 @@ export default function Dashboard() {
                     ? t(`events.problemType${event.problemtype}`)
                     : t(`events.${event.type}`)}
                 </span>
-                <span className="activity-text">{formatEventLabel(event, t)}</span>
+                <span className="activity-text">
+                  {formatEventLabel(event, t)}
+                  {failureReason(event) && (
+                    <span className="activity-detail">{t('events.reason')}: {failureReason(event)}</span>
+                  )}
+                </span>
               </div>
             ))}
           </div>

@@ -28,13 +28,11 @@ async def get_all_courses_route(account_id: str = AccountDep):
     )
     return [
         {
-            # CourseListItemModel guarantees presence of these fields, but we
-            # still use .get() so a partially-populated legacy entry can't 500.
-            "classroom_id": c.get("classroom_id", ""),
-            "name": c.get("name", ""),
-            "classroom_name": c.get("classroom_name", ""),
-            "teacher_name": c.get("teacher_name"),
-            "active": c.get("classroom_id") in active_classroom_ids,
+            "classroom_id": c["classroom_id"],
+            "name": c["name"],
+            "classroom_name": c["classroom_name"],
+            "teacher_name": c["teacher_name"],
+            "active": c["classroom_id"] in active_classroom_ids,
         }
         for c in cached
     ]

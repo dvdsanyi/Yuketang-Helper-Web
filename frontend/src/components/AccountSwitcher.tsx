@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAccounts } from '../hooks/useAccounts'
+import MiddleTruncate from './MiddleTruncate'
 
 export default function AccountSwitcher() {
   const { t } = useTranslation()
@@ -47,7 +48,7 @@ export default function AccountSwitcher() {
   return (
     <div className="account-switcher" ref={ref}>
       <button className="account-switcher-trigger btn-ghost btn-sm" onClick={() => setOpen((v) => !v)}>
-        <span className="account-name">{label}</span>
+        <MiddleTruncate className="account-name" text={label} />
         <span className="account-caret">▾</span>
       </button>
       {open && (
@@ -61,7 +62,7 @@ export default function AccountSwitcher() {
             return (
               <div key={a.id} className={`account-row ${isActive ? 'account-row-active' : ''}`}>
                 <div className="account-row-info">
-                  <span className="account-row-name">{a.name || a.id}</span>
+                  <MiddleTruncate className="account-row-name" text={a.name || a.id} />
                   <span className="account-row-sub">{a.domain}</span>
                 </div>
                 <div className="account-row-actions">

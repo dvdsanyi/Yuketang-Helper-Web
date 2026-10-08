@@ -55,7 +55,7 @@ export default function Login() {
   }, [cleanupPending])
 
   // Mark login as complete and hand off to the Dashboard route. The pause
-  // gives the user a moment to see the ✓ confirmation before the redirect.
+  // gives the user a moment to see the confirmation before the redirect.
   const completeLogin = useCallback(async () => {
     setStatus('success')
     pendingIdRef.current = null
@@ -260,7 +260,6 @@ export default function Login() {
 
               {status === 'success' && (
                 <div className="qr-placeholder qr-success">
-                  <div className="success-icon">✓</div>
                   <span>{t('login.success')}</span>
                 </div>
               )}
@@ -277,7 +276,6 @@ export default function Login() {
             {status === 'success' ? (
               <div className="qr-wrapper">
                 <div className="qr-placeholder qr-success">
-                  <div className="success-icon">✓</div>
                   <span>{t('login.success')}</span>
                 </div>
               </div>

@@ -1,6 +1,21 @@
 # 雨课堂助手 Web 版
 
-- 基于 [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) 和 [THU-Yuketang-Helper](https://github.com/zhangchi2004/THU-Yuketang-Helper)
+- 基于 [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) 和 THU-Yuketang-Helper
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-zh-dark.png">
+  <img alt="仪表盘" src="docs/screenshots/dashboard-zh.png">
+</picture>
+
+<details>
+<summary>设置页面</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-zh-dark.png">
+  <img alt="设置" src="docs/screenshots/settings-zh.png">
+</picture>
+
+</details>
 
 ## 功能
 
@@ -10,7 +25,7 @@
 - **自动抢红包** — 收到红包时自动抢
 - **点名提醒** — 点名时发送通知提醒
 - **语音通知** — 支持语音播报课程事件
-- **手机推送** — 支持 PushDeer 将课堂事件推送到手机（支持自建服务器）
+- **手机推送** — 支持 PushDeer 将课堂事件和登录过期推送到手机（支持自建服务器）
 - **分课程设置** — 对每门课程进行精细化的自动化控制
 - **多服务器支持** — 支持多个雨课堂服务器
 - **多账号支持** — 支持同时登录多个账号
@@ -18,8 +33,6 @@
 - **双语界面** — 支持中英文切换
 
 ## 快速开始
-
-0. STAR 此项目（）
 
 ### 方式一：可执行文件（普通用户推荐）
 
@@ -32,7 +45,7 @@
 ### 方式二：Python（开发者推荐）
 
 1. [下载源代码 ZIP](https://codeload.github.com/dvdsanyi/Yuketang-Helper-Web/zip/refs/heads/main) 并解压，或使用 Git Clone
-1. 安装 [Python 3](https://www.python.org/) 和 [Node.js](https://nodejs.org/)
+1. 安装 [Python 3.14](https://www.python.org/) 和 [Node.js 26](https://nodejs.org/)
 1. 在项目根目录下运行：
 
    ```zsh
@@ -55,14 +68,21 @@
 
 > [!TIP]
 > 服务器部署可通过端口转发在本地浏览器访问；
-> 雨课堂 Session 的有效期为 2 周；
-> 如需24小时服务器运行，可联系作者。
+> 雨课堂 Session 的有效期为 2 周，过期后需重新登录（配置了 PushDeer 会收到提醒）。
 
 ## 停止
 
 - **可执行文件**：关闭终端窗口
 - **Python**：运行 `python stop.py`
 - **Docker**：运行 `docker stop yuketang-helper`
+
+## 日志
+
+运行日志写入数据目录下的 `logs/app.log`，超过 2 MB 自动轮转，保留最近 3 份：
+
+- **可执行文件**：macOS `~/Library/Application Support/Yuketang Helper/logs/`，Windows `%LOCALAPPDATA%\Yuketang Helper\logs\`，Linux `~/.local/share/Yuketang Helper/logs/`
+- **Python**：项目根目录下的 `store/logs/`
+- **Docker**：数据卷中的 `/data/logs/`，可运行 `docker exec yuketang-helper tail -n 200 /data/logs/app.log` 查看
 
 ## 获取 AI API密钥（免费）
 
@@ -76,18 +96,36 @@
 
 - **Google**: 登录 [Google AI Studio](https://aistudio.google.com/)，进入 [Get API Key page](https://aistudio.google.com/api-keys)，点击 **Create API Key**
 
-## 待办
+## 构建（开发者）
 
-- [ ] 支持多种 LLM API
-- [ ] 支持填空题答题
-- [ ] 自动预习
-- [ ] 自动刷回放
+```zsh
+cd frontend && npm ci && npm run build && cd ..
+pip install -r backend/requirements.txt pyinstaller
+pyinstaller YuketangHelper.spec
+```
+
+可执行文件生成在 `dist/` 下。推送 `v*` 标签后，GitHub Actions 会自动构建各平台的可执行文件和 Docker 镜像并发布 Release。
 
 ---
 
 # Yuketang Helper Web
 
-- Based on [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) and [THU-Yuketang-Helper](https://github.com/zhangchi2004/THU-Yuketang-Helper)
+- Based on [RainClassroomAssitant](https://github.com/TrickyDeath/RainClassroomAssitant) and THU-Yuketang-Helper
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-en-dark.png">
+  <img alt="Dashboard" src="docs/screenshots/dashboard-en.png">
+</picture>
+
+<details>
+<summary>Settings page</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-en-dark.png">
+  <img alt="Settings" src="docs/screenshots/settings-en.png">
+</picture>
+
+</details>
 
 ## Features
 
@@ -97,7 +135,7 @@
 - **Auto Red Packet** — Automatically grabs red packets when received
 - **Roll Call Notifications** — Alerts you when roll call happens
 - **Voice Notifications** — Text-to-speech announcements for lesson events
-- **Mobile Push** — Push lesson events to your phone via PushDeer (self-hosted servers supported)
+- **Mobile Push** — Push lesson events and session expiry to your phone via PushDeer (self-hosted servers supported)
 - **Per-Course Settings** — Fine-grained control over automation for each course
 - **Multi-Server Support** — Supports multiple Yuketang servers
 - **Multi-Account Support** — Supports logging in with multiple accounts simultaneously
@@ -105,8 +143,6 @@
 - **Bilingual UI** — English and Chinese interface
 
 ## Quick Start
-
-0. STAR this project ()
 
 ### Option 1: Executable (Recommended for Ordinary Users)
 
@@ -119,7 +155,7 @@
 ### Option 2: Python (Recommended for Developers)
 
 1. [Download source code ZIP](https://codeload.github.com/dvdsanyi/Yuketang-Helper-Web/zip/refs/heads/main) and extract, or use Git Clone
-1. Install [Python 3](https://www.python.org/) and [Node.js](https://nodejs.org/)
+1. Install [Python 3.14](https://www.python.org/) and [Node.js 26](https://nodejs.org/)
 1. Run the following command in the project root directory:
 
    ```zsh
@@ -142,14 +178,21 @@
 
 > [!TIP]
 > Server deployments can be accessed from a local browser via port forwarding;
-> Yuketang Sessions are valid for 2 weeks;
-> Contact the author if you need a 24/7 server.
+> Yuketang Sessions are valid for 2 weeks; log in again after that (PushDeer notifies you if configured).
 
 ## Stop
 
 - **Executable**: Close the terminal window
 - **Python**: Run `python stop.py`
 - **Docker**: Run `docker stop yuketang-helper`
+
+## Logs
+
+Logs are written to `logs/app.log` in the data directory, rotated at 2 MB with the last 3 files kept:
+
+- **Executable**: macOS `~/Library/Application Support/Yuketang Helper/logs/`, Windows `%LOCALAPPDATA%\Yuketang Helper\logs\`, Linux `~/.local/share/Yuketang Helper/logs/`
+- **Python**: `store/logs/` in the project root
+- **Docker**: `/data/logs/` in the data volume; view with `docker exec yuketang-helper tail -n 200 /data/logs/app.log`
 
 ## Get AI API Key (Free)
 
@@ -163,9 +206,12 @@
 
 - **Google**: Log in at [Google AI Studio](https://aistudio.google.com/), go to the [Get API Key page](https://aistudio.google.com/api-keys), and click **Create API Key**
 
-## TODO
+## Build (Developers)
 
-- [ ] Support multiple LLM APIs
-- [ ] Support Fill-in-the-blank answering
-- [ ] Auto preview
-- [ ] Auto replay watching
+```zsh
+cd frontend && npm ci && npm run build && cd ..
+pip install -r backend/requirements.txt pyinstaller
+pyinstaller YuketangHelper.spec
+```
+
+The executable is written to `dist/`. Pushing a `v*` tag makes GitHub Actions build the executables for every platform plus the Docker image, and publish a Release.

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import MiddleTruncate from '../MiddleTruncate'
+import Switch from '../Switch'
 import type {
   ChoiceAnswerMode,
   CourseConfig,
@@ -92,26 +94,13 @@ function NotificationSection({
     <div className="notif-section">
       <div className="form-row">
         <label className="form-label">{label}</label>
-        <span
-          className="toggle-group-wrap"
-          data-tooltip={disabled && disabledTitle ? disabledTitle : undefined}
-        >
-          <div className="toggle-group">
-            <button
-              className={`toggle-option ${effectiveEnabled ? 'selected' : ''}`}
-              onClick={() => onChange({ ...value, enabled: true })}
-              disabled={disabled}
-            >
-              {t('common.on')}
-            </button>
-            <button
-              className={`toggle-option ${!effectiveEnabled ? 'selected' : ''}`}
-              onClick={() => onChange({ ...value, enabled: false })}
-              disabled={disabled}
-            >
-              {t('common.off')}
-            </button>
-          </div>
+        <span className="switch-wrap" data-tooltip={disabled && disabledTitle ? disabledTitle : undefined}>
+          <Switch
+            label={label}
+            checked={effectiveEnabled}
+            onChange={(enabled) => onChange({ ...value, enabled })}
+            disabled={disabled}
+          />
         </span>
       </div>
       {effectiveEnabled && (
@@ -172,7 +161,7 @@ const TIMING_ROWS: { mode: 'Ai' | 'Fallback'; last5s: 'On' | 'Off'; limit: 'Limi
 
 function TimingTooltip() {
   const { t } = useTranslation()
-  const k = (suffix: string) => `settings.answerLast5sTable.${suffix}`
+  const k = (suffix: string) => `settings.answerNearDeadlineTable.${suffix}`
   return (
     <span className="tooltip-trigger">
       ?
@@ -182,7 +171,7 @@ function TimingTooltip() {
           <thead>
             <tr>
               <th>{t(k('headerMode'))}</th>
-              <th>{t(k('headerLast5s'))}</th>
+              <th>{t(k('headerNearDeadline'))}</th>
               <th>{t(k('headerLimit'))}</th>
               <th>{t(k('headerBehavior'))}</th>
             </tr>
@@ -352,31 +341,21 @@ export default function CoursesSection({
           {courses.map((course) => (
             <div key={course.courseId} className="course-card">
               <div className="course-card-header">
-                <h3 className="course-card-title">{course.name || course.courseId}</h3>
+                <h3 className="course-card-title"><MiddleTruncate text={course.name || course.courseId} /></h3>
               </div>
 
               <div className="course-card-body">
                 <div className="settings-group">
-                  <span className="settings-group-label">{t('settings.courseGroup')}</span>
                   <div className="form-row">
                     <label className="form-label">
                       {t('settings.courseEnabled')}
                       <span className="tooltip-trigger" data-tooltip={t('settings.courseEnabledDesc')}>?</span>
                     </label>
-                    <div className="toggle-group">
-                      <button
-                        className={`toggle-option ${course.course_enabled ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'course_enabled', true)}
-                      >
-                        {t('common.on')}
-                      </button>
-                      <button
-                        className={`toggle-option ${!course.course_enabled ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'course_enabled', false)}
-                      >
-                        {t('common.off')}
-                      </button>
-                    </div>
+                    <Switch
+                      label={t('settings.courseEnabled')}
+                      checked={course.course_enabled}
+                      onChange={(v) => updateField(course.courseId, 'course_enabled', v)}
+                    />
                   </div>
                 </div>
 
@@ -407,47 +386,24 @@ export default function CoursesSection({
                 </div>
 
                 <div className="settings-group">
-                  <span className="settings-group-label">{t('settings.timing')}</span>
                   <div className="form-row">
                     <label className="form-label">
-                      {t('settings.answerLast5s')}
+                      {t('settings.answerNearDeadline')}
                       <TimingTooltip />
                     </label>
-                    <div className="toggle-group">
-                      <button
-                        className={`toggle-option ${course.answer_last5s ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'answer_last5s', true)}
-                      >
-                        {t('common.on')}
-                      </button>
-                      <button
-                        className={`toggle-option ${!course.answer_last5s ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'answer_last5s', false)}
-                      >
-                        {t('common.off')}
-                      </button>
-                    </div>
+                    <Switch
+                      label={t('settings.answerNearDeadline')}
+                      checked={course.answer_last5s}
+                      onChange={(v) => updateField(course.courseId, 'answer_last5s', v)}
+                    />
                   </div>
-                </div>
-
-                <div className="settings-group">
-                  <span className="settings-group-label">{t('settings.danmu')}</span>
                   <div className="form-row">
                     <label className="form-label">{t('settings.autoDanmu')}</label>
-                    <div className="toggle-group">
-                      <button
-                        className={`toggle-option ${course.auto_danmu ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'auto_danmu', true)}
-                      >
-                        {t('common.yes')}
-                      </button>
-                      <button
-                        className={`toggle-option ${!course.auto_danmu ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'auto_danmu', false)}
-                      >
-                        {t('common.no')}
-                      </button>
-                    </div>
+                    <Switch
+                      label={t('settings.autoDanmu')}
+                      checked={course.auto_danmu}
+                      onChange={(v) => updateField(course.courseId, 'auto_danmu', v)}
+                    />
                   </div>
                   {course.auto_danmu && (
                     <div className="form-row form-row-sub">
@@ -467,26 +423,13 @@ export default function CoursesSection({
                       </div>
                     </div>
                   )}
-                </div>
-
-                <div className="settings-group">
-                  <span className="settings-group-label">{t('settings.redPacket')}</span>
                   <div className="form-row">
                     <label className="form-label">{t('settings.autoRedpacket')}</label>
-                    <div className="toggle-group">
-                      <button
-                        className={`toggle-option ${course.auto_redpacket ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'auto_redpacket', true)}
-                      >
-                        {t('common.yes')}
-                      </button>
-                      <button
-                        className={`toggle-option ${!course.auto_redpacket ? 'selected' : ''}`}
-                        onClick={() => updateField(course.courseId, 'auto_redpacket', false)}
-                      >
-                        {t('common.no')}
-                      </button>
-                    </div>
+                    <Switch
+                      label={t('settings.autoRedpacket')}
+                      checked={course.auto_redpacket}
+                      onChange={(v) => updateField(course.courseId, 'auto_redpacket', v)}
+                    />
                   </div>
                 </div>
 

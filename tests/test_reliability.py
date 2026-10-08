@@ -15,11 +15,14 @@ from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
-os.environ.setdefault("YUKETANG_STORE_DIR", tempfile.mkdtemp(prefix="yuketang-test-"))
+_store = tempfile.TemporaryDirectory(prefix="yuketang-test-")  # removed at exit
+os.environ.setdefault("YUKETANG_STORE_DIR", _store.name)
 
 import config          # noqa: E402
 import lesson as lesson_mod  # noqa: E402
 import monitor as monitor_mod  # noqa: E402
+import pushdeer  # noqa: E402
+from ai_provider import QwenProvider  # noqa: E402
 from lesson import Lesson     # noqa: E402
 
 PROB, SLIDE, PRES = "prob-1", "slide-1", "pres-1"
@@ -41,10 +44,10 @@ class Fake:
     """Fake Yuketang. The flags steer one failure mode each."""
 
     def __init__(self, result=None, fail_fetch=0, answer_code=0, checkin_ok=True,
-                 limit=0, send_ms=0, always_reject=False):
+                 limit=0, send_ms=0, always_reject=False, cover="http://cover", ptype=1):
         self.result, self.fail_fetch, self.answer_code = result, fail_fetch, answer_code
         self.checkin_ok, self.limit, self.send_ms = checkin_ok, limit, send_ms
-        self.always_reject = always_reject
+        self.always_reject, self.cover, self.ptype = always_reject, cover, ptype
         self.submissions, self.fetches = [], 0
 
     def __call__(self, method, url, **kw):
@@ -59,8 +62,8 @@ class Fake:
             if self.fetches <= self.fail_fetch:
                 raise RuntimeError("fetch failed")
             return SimpleNamespace(headers={}, json=lambda: {"code": 0, "data": {"slides": [
-                {"id": SLIDE, "cover": "http://cover", "problem": {
-                    "problemId": PROB, "problemType": 1, "limit": self.limit,
+                {"id": SLIDE, "cover": self.cover, "problem": {
+                    "problemId": PROB, "problemType": self.ptype, "limit": self.limit,
                     "sendTime": self.send_ms, "result": self.result,
                     "options": [{"key": k, "value": k} for k in "ABCD"]}}]}})
         if "problem/answer" in url:
@@ -160,6 +163,39 @@ def test_answering():
     check("a lesson ending mid-hold submits instead of dropping the answer",
           len(f.submissions) == 1 and time.time() - started < 3, f.submissions)
 
+    l, ev = make_lesson(Fake(), answer_last5s=True)
+    hold, _ = l._submit_window(60, "random")
+    check("near-deadline submits 10-15s before the deadline", 45 <= hold <= 50, hold)
+
+    f = Fake(); l, ev = make_lesson(f, answer_last5s=True)
+    l._dispatch(HELLO)
+    l._dispatch({**UNLOCK, "problem": {**UNLOCK["problem"], "limit": 31}})
+    time.sleep(0.2)
+    f.result = ["C"]  # the user answers by hand while we hold
+    l.stop_lesson()
+    settle()
+    skipped = [d.get("message") for t, d in ev if t == "problem" and d.get("status") == "skipped"]
+    check("an answer given by hand during the hold is not replaced",
+          f.submissions == [] and skipped == ["answered"], (f.submissions, skipped))
+
+    f = Fake(); l, ev = make_lesson(f, type1="off")
+    l._dispatch(HELLO); l._dispatch(UNLOCK); l._dispatch(UNLOCK); l._dispatch(HELLO); settle()
+    skipped = [d.get("message") for t, d in ev if t == "problem" and d.get("status") == "skipped"]
+    check("a turned-off type is reported once, not answered", f.submissions == [] and skipped == ["off"],
+          (f.submissions, skipped))
+
+    f = Fake(ptype=4); l, ev = make_lesson(f)
+    l._dispatch(HELLO); l._dispatch(UNLOCK); settle()
+    skipped = [d.get("message") for t, d in ev if t == "problem" and d.get("status") == "skipped"]
+    check("an unsupported type is reported, not silently dropped", skipped == ["unsupported"], skipped)
+
+    f = Fake(limit=60, send_ms=int(time.time() * 1000)); l, ev = make_lesson(f)
+    l._dispatch(HELLO)
+    l._dispatch({"op": "showpresentation", "dt": (time.time() + 30) * 1000})  # server clock 30s ahead
+    l._dispatch({"op": "showpresentation", "dt": (time.time() - 600) * 1000})  # a stale timestamp
+    remaining = l._remaining_limit(l._problems[PROB])
+    check("deadlines follow the server clock, never a stale timestamp", 28 <= remaining <= 30, remaining)
+
 
 # ----------------------------------------------------------------- AI paths
 
@@ -177,7 +213,40 @@ def test_ai():
     problem_events = [d for t, d in ev if t == "problem"]
     check("AI failure falls back to a generated answer",
           len(f.submissions) == 1 and problem_events[-1].get("source") == "random", problem_events)
-    check("AI failure is notified", any(d.get("status") == "ai_failed" for d in problem_events))
+    check("AI failure is notified with its reason",
+          any(d.get("status") == "ai_failed" and "provider down" in d.get("message", "")
+              for d in problem_events), problem_events)
+
+    calls = []
+    stub_ai(lambda: calls.append(1) or ["A"])
+    f = Fake(cover=""); l, ev = make_lesson(f, type1="ai")
+    l._dispatch(HELLO); l._dispatch(UNLOCK); settle()
+    problem_events = [d for t, d in ev if t == "problem"]
+    check("a slide without a cover skips AI and falls back",
+          calls == [] and len(f.submissions) == 1 and problem_events[-1].get("source") == "random",
+          (calls, problem_events))
+    check("a missing cover is the reported reason",
+          any(d.get("message") == "slide has no cover image" for d in problem_events), problem_events)
+
+    calls = []
+    stub_ai(lambda: calls.append(1) or ["A"])
+    f = Fake(cover=""); l, ev = make_lesson(f, type1="ai")
+    l._dispatch(HELLO)
+    f.cover = "http://cover"  # the slide image finished rendering after our first fetch
+    l._dispatch(UNLOCK); settle()
+    check("a cover missing from the cached slide is re-read before giving up on AI",
+          calls == [1] and [s["result"] for s in f.submissions] == [["A"]], (calls, f.submissions))
+
+    qwen = QwenProvider.__new__(QwenProvider)
+    qwen.model = "m"
+    null_reply = SimpleNamespace(choices=None)  # what ModelScope sends for some failures
+    qwen.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **k: null_reply)))
+    try:
+        qwen.answer_options("http://cover", ["A", "B"], 1, 1)
+        reason = ""
+    except RuntimeError as e:
+        reason = str(e)
+    check("a ModelScope reply without choices raises a readable error", "choices is null" in reason, reason)
 
     stub_ai(lambda: time.sleep(30) or ["A"])  # provider hangs past the deadline
     f = Fake(); l, ev = make_lesson(f, type1="ai", answer_last5s=True)
@@ -243,10 +312,25 @@ def test_poll_loop():
     m._running = False
     m._wake_event.set()
 
+    pushed = []
+    monitor_mod.pushdeer.send_session_expired = pushed.append
     m, events, polls = run_monitor([1, 1, 1, 1])
     time.sleep(3.4)
     check("a genuinely dead session expires after the cap",
           not m._running and events.count("session_expired") == 1, (events, polls))
+    check("an expired session is pushed to the phone", pushed == ["acct"], pushed)
+
+
+# ---------------------------------------------------------------- push text
+
+def test_push_text():
+    title, body = pushdeer.format_event("problem", {"lesson": "L", "problemtype": 2, "status": "success",
+                                                    "answers": ["A", "C"], "source": "ai"}, "en")
+    check("push names the type once, in the title", title == "Multiple Choice" and body == "L: success, answer(s): A, C [AI]",
+          (title, body))
+    _, body = pushdeer.format_event("problem", {"lesson": "L", "problemtype": 2, "status": "ai_failed",
+                                                "message": "slide has no cover image"}, "en")
+    check("push carries the failure reason", body.endswith("\nReason: slide has no cover image"), body)
 
 
 if __name__ == "__main__":
@@ -254,5 +338,6 @@ if __name__ == "__main__":
     test_ai()
     test_checkin()
     test_poll_loop()
+    test_push_text()
     print("\nALL PASS" if not failures else f"\n{len(failures)} FAILED: {failures}")
     sys.exit(1 if failures else 0)

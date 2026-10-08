@@ -38,12 +38,16 @@ _FALLBACK_EVENTS_ZH = {
     "error": "失败",
     "ai_failed": "AI 答题失败",
     "answer": "答案",
+    "reason": "原因",
+    "session_expired_hint": "请重新登录",
 }
 _FALLBACK_EVENTS_EN = {
     "success": "success",
     "error": "error",
     "ai_failed": "AI answering failed",
     "answer": "answer(s)",
+    "reason": "Reason",
+    "session_expired_hint": "Please log in again",
 }
 
 
@@ -110,57 +114,51 @@ def _format_badge(event_type: str, data: dict, s: _Strings) -> str:
     return s[event_type]
 
 
-def _format_label(event_type: str, data: dict, s: _Strings) -> str:
-    """Port of Dashboard.tsx formatEventLabel."""
-    type_name = s[event_type]
-    lesson = f"[{data['lesson']}] " if data.get("lesson") else ""
+def _format_detail(event_type: str, data: dict, s: _Strings) -> str:
     status = data.get("status") or "success"
-
-    if event_type == "signin":
-        return f"{lesson}{type_name}: {s[status]}"
-
-    if event_type == "problem_received":
-        return f"{lesson}{type_name}"
-
+    if event_type in ("signin", "red_packet"):
+        return s[status]
     if event_type == "problem":
-        ptype = data.get("problemtype")
-        problem_type_name = s[f"problemType{ptype}"] if ptype else type_name
         if status == "ai_failed":
-            return f"{lesson}{problem_type_name}: {s['ai_failed']}"
-        status_text = s[status]
+            return s["ai_failed"]
+        if status == "skipped":
+            return s[f"skip_{data.get('message')}"]
         answer_text = _answers_text(data.get("answers"))
         source = data.get("source")
         source_text = f" [{s[f'source_{source}']}]" if source else ""
         answer_suffix = f", {s['answer']}: {answer_text}" if answer_text else ""
-        return f"{lesson}{problem_type_name}: {status_text}{answer_suffix}{source_text}"
-
+        return f"{s[status]}{answer_suffix}{source_text}"
     if event_type == "danmu":
-        content = data.get("content") or ""
-        return f'{lesson}{type_name}: "{content}" — {s[status]}'
-
-    if event_type == "call":
-        return f"{lesson}{type_name}"
-
-    if event_type == "red_packet":
-        return f"{lesson}{type_name}: {s[status]}"
-
+        return f'"{data.get("content") or ""}" — {s[status]}'
     if event_type == "session_expired":
-        return type_name
+        return s["session_expired_hint"]
+    if event_type in ("problem_received", "call", "lesson_start", "lesson_end"):
+        return ""
+    return data.get("message") or ""
 
-    if event_type in ("lesson_end", "lesson_start"):
-        return f"{lesson}{type_name}"
 
-    message = data.get("message") or ""
-    return f"{lesson}{type_name}{': ' + message if message else ''}"
+def _format_label(event_type: str, data: dict, s: _Strings) -> str:
+    """Port of Dashboard.tsx formatEventLabel: lesson plus details. The event
+    type itself is the badge (the push title), so it isn't repeated here."""
+    detail = _format_detail(event_type, data, s)
+    lesson = data.get("lesson") or ""
+    if not lesson:
+        return detail
+    return f"{lesson}: {detail}" if detail else lesson
 
 
 def format_event(event_type: str, data: dict, language: PushdeerLanguage = "zh") -> Optional[tuple[str, str]]:
     """Return (title, body) for a PushDeer push. Matches Dashboard event row:
-    title = badge text, body = formatEventLabel output."""
+    title = badge text, body = formatEventLabel output plus the failure reason
+    the Dashboard shows under the row."""
     if event_type not in _EVENT_SUBKEY:
         return None
     s = _load_events(language)
-    return _format_badge(event_type, data, s), _format_label(event_type, data, s)
+    body = _format_label(event_type, data, s)
+    reason = data.get("message") if data.get("status") in ("error", "ai_failed") else None
+    if reason:
+        body += f"\n{s['reason']}: {reason}"
+    return _format_badge(event_type, data, s), body
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +206,24 @@ def _account_name(account_id: str) -> str:
     return account_display_name(get_account(account_id) or {}, account_id)
 
 
+def _credentials(entry: Optional[dict]) -> Optional[tuple[str, str]]:
+    """(endpoint, push_key) of a key entry, or None if it can't be used."""
+    if entry is None:
+        return None
+    endpoint = entry.get("endpoint", "").strip()
+    push_key = entry.get("push_key", "").strip()
+    return (endpoint, push_key) if endpoint and push_key else None
+
+
+def _title(language: PushdeerLanguage, label: str, account_id: str) -> str:
+    brand = "Yuketang Helper" if language == "en" else "雨课堂助手"
+    return f"{brand}-{label}-{_account_name(account_id)}"
+
+
+def _send_async(endpoint: str, push_key: str, title: str, body: str) -> None:
+    threading.Thread(target=_send, args=(endpoint, push_key, title, body), daemon=True, name="pushdeer-send").start()
+
+
 def dispatch(account_id: str, classroom_id: str, event_type: str, data: dict) -> None:
     """Fire-and-forget push for one event. Safe to call from any thread."""
     subkey = _EVENT_SUBKEY.get(event_type)
@@ -215,12 +231,8 @@ def dispatch(account_id: str, classroom_id: str, event_type: str, data: dict) ->
         return
 
     pd_cfg = get_pushdeer_config(account_id)
-    entry = _active_entry(pd_cfg)
-    if entry is None:
-        return
-    endpoint = entry.get("endpoint", "").strip()
-    push_key = entry.get("push_key", "").strip()
-    if not endpoint or not push_key:
+    creds = _credentials(_active_entry(pd_cfg))
+    if creds is None:
         return
 
     course_cfg = get_course_config(account_id, classroom_id)
@@ -234,14 +246,20 @@ def dispatch(account_id: str, classroom_id: str, event_type: str, data: dict) ->
     formatted = format_event(event_type, data, language)
     if formatted is None:
         return
-    title, body = formatted
-    brand = "Yuketang Helper" if language == "en" else "雨课堂助手"
-    title = f"{brand}-{title}-{_account_name(account_id)}"
+    label, body = formatted
+    _send_async(*creds, _title(language, label, account_id), body)
 
-    def _worker():
-        _send(endpoint, push_key, title, body)
 
-    threading.Thread(target=_worker, daemon=True, name="pushdeer-send").start()
+def send_session_expired(account_id: str) -> None:
+    """Account-level push, not gated by any course toggle: an expired session
+    silently stops answering in every later lesson, so it must reach the user."""
+    pd_cfg = get_pushdeer_config(account_id)
+    creds = _credentials(_active_entry(pd_cfg))
+    if creds is None:
+        return
+    language = pd_cfg["language"]
+    s = _load_events(language)
+    _send_async(*creds, _title(language, s["session_expired"], account_id), s["session_expired_hint"])
 
 
 def send_liveness(account_id: str, entry: Optional[dict] = None) -> tuple[bool, str]:
@@ -256,9 +274,8 @@ def send_liveness(account_id: str, entry: Optional[dict] = None) -> tuple[bool, 
         entry = _active_entry(pd_cfg)
         if entry is None:
             return False, "no active pushdeer key"
-    endpoint = entry.get("endpoint", "").strip()
-    push_key = entry.get("push_key", "").strip()
-    if not endpoint or not push_key:
+    creds = _credentials(entry)
+    if creds is None:
         return False, "endpoint and push_key required"
     if not get_sessionid(account_id):
         return False, "session expired"
@@ -270,4 +287,4 @@ def send_liveness(account_id: str, entry: Optional[dict] = None) -> tuple[bool, 
     else:
         title = f"雨课堂助手-心跳-{name}"
         body = "当你看到这条消息，说明 PushDeer 和雨课堂助手正常运行且该账号 session 未过期。"
-    return _send(endpoint, push_key, title, body)
+    return _send(*creds, title, body)
