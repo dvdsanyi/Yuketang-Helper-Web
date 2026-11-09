@@ -89,10 +89,11 @@
 - **ModelScope**: 登录 [ModelScope](https://modelscope.cn/)，前往[访问控制](https://modelscope.cn/my/access/token)，点击 **新建访问令牌**
 
 > [!IMPORTANT]
-> 使用 ModelScope API 需同时满足以下两点，否则即使创建了访问令牌也无法调用模型 API，本助手会调用失败：
+> 使用 ModelScope API 需同时满足以下三点，否则即使创建了访问令牌也无法调用模型 API，本助手会调用失败：
 >
 > 1. **在 ModelScope [账号设置](https://modelscope.cn/my/settings/account) 中绑定阿里云账号**
 > 2. **完成实名认证**
+> 3. **完成邮箱验证**
 
 - **Google**: 登录 [Google AI Studio](https://aistudio.google.com/)，进入 [Get API Key page](https://aistudio.google.com/api-keys)，点击 **Create API Key**
 
@@ -199,10 +200,11 @@ Logs are written to `logs/app.log` in the data directory, rotated at 2 MB with t
 - **ModelScope**: Log in at [ModelScope](https://modelscope.cn/), go to [Access Control](https://modelscope.cn/my/access/token) and click **Create Your Token**
 
 > [!IMPORTANT]
-> Using the ModelScope API requires **both** of the following; otherwise model API calls will fail even with a valid access token, and this helper will not be able to answer with AI:
+> Using the ModelScope API requires **all three** of the following; otherwise model API calls will fail even with a valid access token, and this helper will not be able to answer with AI:
 >
 > 1. **Bind an Alibaba Cloud account in ModelScope [Account Settings](https://modelscope.cn/my/settings/account)**
 > 2. **Complete real-name verification**
+> 3. **Complete email verification**
 
 - **Google**: Log in at [Google AI Studio](https://aistudio.google.com/), go to the [Get API Key page](https://aistudio.google.com/api-keys), and click **Create API Key**
 
