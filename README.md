@@ -45,7 +45,7 @@
 ### 方式二：Python（开发者推荐）
 
 1. [下载源代码 ZIP](https://codeload.github.com/dvdsanyi/Yuketang-Helper-Web/zip/refs/heads/main) 并解压，或使用 Git Clone
-1. 安装 [Python 3.14](https://www.python.org/) 和 [Node.js 26](https://nodejs.org/)
+1. 安装 [Python 3.15](https://www.python.org/) 和 [Node.js 26](https://nodejs.org/)
 1. 在项目根目录下安装依赖并启动：
 
    ```zsh
@@ -158,7 +158,7 @@ pyinstaller YuketangHelper.spec
 ### Option 2: Python (Recommended for Developers)
 
 1. [Download source code ZIP](https://codeload.github.com/dvdsanyi/Yuketang-Helper-Web/zip/refs/heads/main) and extract, or use Git Clone
-1. Install [Python 3.14](https://www.python.org/) and [Node.js 26](https://nodejs.org/)
+1. Install [Python 3.15](https://www.python.org/) and [Node.js 26](https://nodejs.org/)
 1. Install the dependencies and start it from the project root directory:
 
    ```zsh
