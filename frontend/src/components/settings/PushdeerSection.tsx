@@ -6,6 +6,8 @@ import MiddleTruncate from '../MiddleTruncate'
 type TestState = { status: 'idle' | 'testing' | 'success' | 'error'; message: string }
 const IDLE: TestState = { status: 'idle', message: '' }
 
+const EMPTY_KEY: PushdeerKeyEntry = { name: '', endpoint: 'https://api2.pushdeer.com', push_key: '' }
+
 export default function PushdeerSection({
   base,
   pushdeer,
@@ -16,11 +18,7 @@ export default function PushdeerSection({
   onReload: () => Promise<void>
 }) {
   const { t } = useTranslation()
-  const [newKey, setNewKey] = useState<PushdeerKeyEntry>({
-    name: '',
-    endpoint: 'https://api2.pushdeer.com',
-    push_key: '',
-  })
+  const [newKey, setNewKey] = useState(EMPTY_KEY)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState(false)
   const [tests, setTests] = useState<Record<number, TestState>>({})
@@ -43,7 +41,7 @@ export default function PushdeerSection({
         }),
       })
       if (!resp.ok) throw new Error('Add failed')
-      setNewKey({ name: '', endpoint: 'https://api2.pushdeer.com', push_key: '' })
+      setNewKey(EMPTY_KEY)
       await onReload()
     } catch {
       setAddError(true)

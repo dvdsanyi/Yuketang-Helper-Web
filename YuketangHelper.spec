@@ -28,10 +28,8 @@ a = Analysis(
     datas=[
         # Frontend build output -> bundled as "static/"
         (str(ROOT / "frontend" / "dist"), "static"),
-        # Backend source files (imported at runtime)
-        (str(ROOT / "backend"), "backend"),
         # Locales — pushdeer.py loads frontend's i18n JSON at runtime so push
-        # messages stay in sync with the UI. Bundle them next to backend/.
+        # messages stay in sync with the UI.
         (str(ROOT / "frontend" / "src" / "locales"), "locales"),
         # CA certificates for SSL/TLS
         (certifi.where(), "certifi"),
@@ -56,25 +54,6 @@ a = Analysis(
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan",
         "uvicorn.lifespan.on",
-        # FastAPI / Starlette internals
-        "multipart",
-        "multipart.multipart",
-        # Backend modules
-        "config",
-        "monitor",
-        "lesson",
-        "event_log",
-        "ai_provider",
-        "auth",
-        "state",
-        "routers",
-        "routers.accounts",
-        "routers.ai",
-        "routers.courses",
-        "routers.domains",
-        "routers.events",
-        "routers.login",
-        "routers.pushdeer_router",
     ],
     noarchive=False,
 )

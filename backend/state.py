@@ -3,12 +3,9 @@ pending-account slots). Kept in its own module so routers and the main app
 can import from one place without circular dependencies."""
 
 import asyncio
+import contextlib
 import threading
-from typing import Optional
 
-from fastapi import HTTPException
-
-from config import get_account
 from monitor import Monitor
 
 
@@ -24,17 +21,17 @@ subscribers_lock = threading.Lock()
 monitors: dict[str, Monitor] = {}
 monitors_lock = threading.Lock()
 
-# In-memory pending account slots — never persisted; lost on restart.
-pending: dict[str, dict] = {}
+# Logins in progress: { pending_id: domain }. Never persisted; lost on restart.
+pending: dict[str, str] = {}
 pending_lock = threading.Lock()
 
 
-def get_monitor(account_id: str) -> Optional[Monitor]:
+def get_monitor(account_id: str) -> Monitor | None:
     with monitors_lock:
         return monitors.get(account_id)
 
 
-def set_monitor(account_id: str, m: Optional[Monitor]) -> None:
+def set_monitor(account_id: str, m: Monitor | None) -> None:
     with monitors_lock:
         if m is None:
             monitors.pop(account_id, None)
@@ -48,15 +45,5 @@ def kick_subscribers(account_id: str) -> None:
     with subscribers_lock:
         queues = list(subscribers.pop(account_id, ()))
     for q in queues:
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             q.put_nowait({"type": "account_closed"})
-        except asyncio.QueueFull:
-            pass
-
-
-def require_account(account_id: str) -> dict:
-    """Return the account dict or raise 404. Helper for route handlers."""
-    acc = get_account(account_id)
-    if acc is None:
-        raise HTTPException(status_code=404, detail="account not found")
-    return acc

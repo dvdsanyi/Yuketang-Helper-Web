@@ -21,8 +21,7 @@ interface ActivityEvent {
   message?: string
   content?: string
   // Type 1/2/3 send list[str]; type 5 (short answer) sends a string.
-  answers?: unknown
-  problemid?: unknown
+  answers?: string | string[]
   problemtype?: number
   source?: string
 }
@@ -53,18 +52,14 @@ function asEvent(m: Record<string, unknown>, id: number, timestamp: string): Act
     status: m.status as string | undefined,
     message: m.message as string | undefined,
     content: m.content as string | undefined,
-    answers: m.answers,
-    problemid: m.problemid,
+    answers: m.answers as string | string[] | undefined,
     problemtype: m.problemtype as number | undefined,
     source: m.source as string | undefined,
   }
 }
 
-function answersText(answers: unknown): string {
-  if (answers == null) return ''
-  if (Array.isArray(answers)) return answers.join(', ')
-  if (typeof answers === 'object') return JSON.stringify(answers)
-  return String(answers)
+function answersText(answers: ActivityEvent['answers']): string {
+  return Array.isArray(answers) ? answers.join(', ') : answers ?? ''
 }
 
 // Row text is the lesson plus details; the badge already names the event type.
@@ -136,7 +131,7 @@ function eventBadgeClass(event: ActivityEvent): string {
 
 export default function Dashboard() {
   const { t, i18n } = useTranslation()
-  const { activeAccount } = useAccounts()
+  const { activeAccount, refresh } = useAccounts()
   const accountId = activeAccount?.id ?? null
   const [allCourses, setAllCourses] = useState<CourseItem[]>([])
   const [events, setEvents] = useState<ActivityEvent[]>([])
@@ -269,6 +264,9 @@ export default function Dashboard() {
         const event = asEvent(msg, ++eventCounter.current, localTimeString(new Date()))
         setEvents((prev) => [event, ...prev].slice(0, 50))
 
+        // The account is logged out now; reloading it sends the route to /login.
+        if (event.type === 'session_expired') void refresh()
+
         if (event.type === 'lesson_start' || event.type === 'lesson_end') {
           fetchAllCourses()
           fetchLessons()
@@ -285,7 +283,6 @@ export default function Dashboard() {
         }
       }
 
-      ws.onerror = () => {}
       ws.onclose = () => {
         if (!unmounted) {
           reconnectTimer = setTimeout(connect, 3000)
@@ -300,7 +297,7 @@ export default function Dashboard() {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       ws?.close()
     }
-  }, [accountId, fetchAllCourses, fetchLessons, fetchCourseConfigs, notify, speak])
+  }, [accountId, fetchAllCourses, fetchLessons, fetchCourseConfigs, notify, speak, refresh])
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = 0

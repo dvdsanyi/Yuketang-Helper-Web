@@ -59,8 +59,10 @@ async def set_pushdeer_language(body: LanguageBody, account_id: str = AccountDep
     return {"ok": True}
 
 
+# Plain `def`: the push is a blocking HTTP call, so FastAPI runs it in a
+# worker thread instead of stalling the event loop while PushDeer answers.
 @router.post("/api/accounts/{account_id}/pushdeer/test/{index}")
-async def pushdeer_test(index: int, account_id: str = AccountDep):
+def pushdeer_test(index: int, account_id: str = AccountDep):
     cfg = get_pushdeer_config(account_id)
     keys = cfg["keys"]
     validate_index(keys, index)

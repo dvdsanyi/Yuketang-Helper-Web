@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { DomainOption } from '../types'
 import { useAccounts } from '../hooks/useAccounts'
 
-type LoginStatus = 'idle' | 'waiting' | 'qr_ready' | 'success'
+type LoginStatus = 'idle' | 'waiting' | 'qr_ready' | 'error' | 'success'
 type LoginMethod = 'qrcode' | 'password'
 
 const CAPTCHA_SRC = 'https://turing.captcha.qcloud.com/TCaptcha.js'
@@ -18,15 +18,52 @@ declare global {
   }
 }
 
+// Allocate a login slot on the backend; it remembers the chosen server until
+// the login completes.
+async function createPendingAccount(domain: string): Promise<string> {
+  const resp = await fetch('/api/accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  })
+  const data: { account_id: string } = await resp.json()
+  return data.account_id
+}
+
+function deletePendingAccount(id: string): void {
+  fetch(`/api/accounts/${id}`, { method: 'DELETE' }).catch(() => {})
+}
+
+// Tencent's widget is loaded on demand rather than from index.html: only
+// password login needs it, and that host being slow or unreachable then costs
+// one login method instead of blanking the whole page.
+function loadCaptcha(): Promise<void> {
+  if (window.TencentCaptcha) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = CAPTCHA_SRC
+    script.async = true
+    script.onload = () => resolve()
+    script.onerror = () => {
+      script.remove()  // so the next attempt loads it afresh
+      reject(new Error('captcha unavailable'))
+    }
+    document.head.appendChild(script)
+  })
+}
+
 export default function Login() {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
-  const { refresh, state } = useAccounts()
-  const canCancel = state.accounts.some((a) => a.logged_in)
+  const { refresh, activeAccount } = useAccounts()
   const wsRef = useRef<WebSocket | null>(null)
   const pendingIdRef = useRef<string | null>(null)
+  // Bumped whenever the QR flow restarts or is torn down, so a flow still
+  // waiting on its pending account can tell it has been superseded.
+  const flowRef = useRef(0)
   const [status, setStatus] = useState<LoginStatus>('idle')
   const [qrUrl, setQrUrl] = useState<string>('')
+  const [qrError, setQrError] = useState('')
   const [domain, setDomain] = useState<string>('')
   const [serverOptions, setServerOptions] = useState<DomainOption[]>([])
 
@@ -36,23 +73,11 @@ export default function Login() {
   const [pwLoading, setPwLoading] = useState(false)
   const [pwError, setPwError] = useState('')
 
-  const cleanupPending = useCallback(() => {
-    if (!pendingIdRef.current) return
-    fetch(`/api/accounts/${pendingIdRef.current}`, { method: 'DELETE' }).catch(() => {})
-    pendingIdRef.current = null
+  // Track `next` as the login slot in use, releasing the one it replaces.
+  const setPending = useCallback((next: string | null) => {
+    if (pendingIdRef.current) deletePendingAccount(pendingIdRef.current)
+    pendingIdRef.current = next
   }, [])
-
-  const createPendingAccount = useCallback(async (d: string): Promise<string> => {
-    cleanupPending()
-    const resp = await fetch('/api/accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain: d }),
-    })
-    const data = await resp.json()
-    pendingIdRef.current = data.account_id as string
-    return pendingIdRef.current
-  }, [cleanupPending])
 
   // Mark login as complete and hand off to the Dashboard route. The pause
   // gives the user a moment to see the confirmation before the redirect.
@@ -64,15 +89,30 @@ export default function Login() {
   }, [navigate, refresh])
 
   const startQrFlow = useCallback(async (d: string) => {
+    const flow = ++flowRef.current
+    wsRef.current?.close()
     setStatus('waiting')
     setQrUrl('')
-    const aid = await createPendingAccount(d)
+    setQrError('')
+    let aid: string
+    try {
+      aid = await createPendingAccount(d)
+    } catch {
+      if (flow === flowRef.current) setStatus('error')
+      return
+    }
+    if (flow !== flowRef.current) {
+      deletePendingAccount(aid)
+      return
+    }
+    setPending(aid)
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${protocol}://${window.location.host}/ws/accounts/${aid}/login`)
     wsRef.current = ws
 
     ws.onmessage = (ev) => {
+      if (flow !== flowRef.current) return
       let msg: Record<string, unknown>
       try {
         msg = JSON.parse(ev.data as string) as Record<string, unknown>
@@ -85,74 +125,49 @@ export default function Login() {
         setStatus('qr_ready')
       } else if (type === 'success') {
         void completeLogin()
+      } else if (type === 'error') {
+        setQrError(String(msg['message'] ?? ''))
+        setStatus('error')
       }
     }
-  }, [createPendingAccount, completeLogin])
+    // The backend only hangs up once the login has succeeded or failed, so a
+    // socket lost before that leaves a QR code nothing is listening for.
+    ws.onclose = () => {
+      if (flow !== flowRef.current) return
+      setStatus((s) => (s === 'waiting' || s === 'qr_ready' ? 'error' : s))
+    }
+  }, [setPending, completeLogin])
 
-  // Load domain options on mount + clean up pending account on unmount
+  // Load domain options on mount + release the pending account on unmount.
+  // Signing back in to an expired account starts on that account's server.
   useEffect(() => {
+    const expiredOn = activeAccount && !activeAccount.logged_in ? activeAccount.domain : null
     fetch('/api/domains')
       .then((r) => r.json())
       .then((data: { options: DomainOption[]; default: string }) => {
         setServerOptions(data.options)
-        setDomain(data.default)
+        setDomain(expiredOn ?? data.default)
       })
-    return () => {
-      wsRef.current?.close()
-      cleanupPending()
-    }
-  }, [cleanupPending])
+    return () => setPending(null)
+  }, [setPending])
 
-  // Start QR flow when domain/method becomes ready. `status` is intentionally
-  // excluded from the deps: startQrFlow itself drives status
-  // (idle→waiting→qr_ready), so depending on it would re-fire this effect on
-  // every transition and restart the whole flow (new pending account + socket)
-  // in a loop. method/domain/startQrFlow are the only real triggers.
+  // Start QR flow when domain/method becomes ready, and stop it when either
+  // changes or the page is left. `status` is intentionally excluded from the
+  // deps: startQrFlow itself drives status (idle→waiting→qr_ready/error), so
+  // depending on it would re-fire this effect on every transition and restart
+  // the whole flow (new pending account + socket) in a loop.
   useEffect(() => {
     if (method !== 'qrcode' || !domain || status === 'success') return
     void startQrFlow(domain)
     return () => {
+      flowRef.current++
       wsRef.current?.close()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, domain, startQrFlow])
-
-  const handleDomainChange = (newDomain: string) => {
-    setDomain(newDomain)
-    wsRef.current?.close()
-  }
 
   const handleMethodChange = (m: LoginMethod) => {
     setMethod(m)
     setPwError('')
-    // Just close the socket; switching to qrcode re-runs the effect below
-    // (keyed on `method`), which restarts the QR flow exactly once. Calling
-    // startQrFlow here too would double-create the pending account + socket.
-    wsRef.current?.close()
-  }
-
-  const handleRefresh = () => {
-    wsRef.current?.close()
-    if (domain) void startQrFlow(domain)
-  }
-
-  // Tencent's widget used to be a blocking <script> in index.html, which left
-  // the whole app blank whenever that host was slow or unreachable. Load it
-  // here instead: only password login needs it, and a failure now costs one
-  // login method rather than the entire page.
-  const loadCaptcha = (): Promise<void> => {
-    if (window.TencentCaptcha) return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      const existing = document.querySelector<HTMLScriptElement>(`script[src="${CAPTCHA_SRC}"]`)
-      const script = existing ?? document.createElement('script')
-      script.addEventListener('load', () => resolve())
-      script.addEventListener('error', () => reject(new Error('captcha unavailable')))
-      if (!existing) {
-        script.src = CAPTCHA_SRC
-        script.async = true
-        document.head.appendChild(script)
-      }
-    })
   }
 
   const showCaptcha = async (): Promise<{ ticket: string; randstr: string } | null> => {
@@ -179,6 +194,7 @@ export default function Login() {
       const captchaResult = await showCaptcha()
       if (!captchaResult) return  // user dismissed the captcha
       const aid = await createPendingAccount(domain)
+      setPending(aid)
       const resp = await fetch(`/api/accounts/${aid}/auth/password-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,17 +213,11 @@ export default function Login() {
     }
   }
 
-  const handleCancel = () => {
-    wsRef.current?.close()
-    cleanupPending()
-    navigate('/dashboard')
-  }
-
   return (
     <div className="login-container">
       <div className="login-card">
-        {canCancel && (
-          <button className="btn btn-ghost btn-sm login-cancel" onClick={handleCancel}>
+        {activeAccount?.logged_in && (
+          <button className="btn btn-ghost btn-sm login-cancel" onClick={() => navigate('/dashboard')}>
             ← {t('login.cancel')}
           </button>
         )}
@@ -233,7 +243,7 @@ export default function Login() {
           <select
             className="form-select"
             value={domain}
-            onChange={(e) => handleDomainChange(e.target.value)}
+            onChange={(e) => setDomain(e.target.value)}
             disabled={status === 'waiting' || status === 'success'}
           >
             {serverOptions.map((opt) => (
@@ -258,6 +268,12 @@ export default function Login() {
                 <img src={qrUrl} alt="QR Code" className="qr-image" />
               )}
 
+              {status === 'error' && (
+                <div className="qr-placeholder qr-error">
+                  <span>{t('login.qrFailed')}</span>
+                </div>
+              )}
+
               {status === 'success' && (
                 <div className="qr-placeholder qr-success">
                   <span>{t('login.success')}</span>
@@ -265,8 +281,20 @@ export default function Login() {
               )}
             </div>
 
-            {status === 'qr_ready' && (
-              <button className="btn btn-secondary" onClick={handleRefresh}>
+            {status === 'error' && qrError && (
+              <p
+                className="login-form-error qr-error-detail"
+                onMouseEnter={(e) => {
+                  const el = e.currentTarget
+                  el.title = el.scrollHeight > el.clientHeight ? qrError : ''
+                }}
+              >
+                {qrError}
+              </p>
+            )}
+
+            {(status === 'qr_ready' || status === 'error') && (
+              <button className="btn btn-secondary" onClick={() => void startQrFlow(domain)}>
                 {t('login.refresh')}
               </button>
             )}

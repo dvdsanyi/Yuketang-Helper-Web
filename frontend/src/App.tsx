@@ -13,17 +13,15 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 const REPO_URL = 'https://github.com/dvdsanyi/Yuketang-Helper-Web'
 const VERSION = import.meta.env.VITE_APP_VERSION
 
+function Loading() {
+  const { t } = useTranslation()
+  return <div className="loading-screen">{t('common.loading')}</div>
+}
+
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { loading, state, activeAccount } = useAccounts()
-  if (loading) {
-    return <div className="loading-screen">Loading...</div>
-  }
-  if (state.accounts.length === 0) {
-    return <Navigate to="/login" replace />
-  }
-  if (!activeAccount || !activeAccount.logged_in) {
-    return <Navigate to="/login" replace />
-  }
+  const { loading, activeAccount } = useAccounts()
+  if (loading) return <Loading />
+  if (!activeAccount?.logged_in) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
@@ -67,28 +65,7 @@ function AppInner() {
 
       <main className="main-content">
         <Routes>
-          <Route
-            path="/"
-            element={
-              loading ? (
-                <div className="loading-screen">Loading...</div>
-              ) : hasAuthedAccount ? (
-                <Navigate to="/dashboard" replace />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-          <Route
-            path="/login"
-            element={
-              loading ? (
-                <div className="loading-screen">Loading...</div>
-              ) : (
-                <Login />
-              )
-            }
-          />
+          <Route path="/login" element={loading ? <Loading /> : <Login />} />
           <Route
             path="/dashboard"
             element={
@@ -102,6 +79,14 @@ function AppInner() {
             element={
               <ProtectedRoute>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <ProtectedRoute>
+                <Navigate to="/dashboard" replace />
               </ProtectedRoute>
             }
           />

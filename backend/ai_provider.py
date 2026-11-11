@@ -1,6 +1,5 @@
 import logging
 import re
-from typing import Optional
 
 from config import http_request
 
@@ -48,7 +47,7 @@ def _vote_prompt(max_count: int, options_str: str) -> str:
     )
 
 
-def _parse_letters(raw: str, options: list[str], max_count: Optional[int] = None) -> list[str]:
+def _parse_letters(raw: str, options: list[str], max_count: int | None = None) -> list[str]:
     option_map = {opt.upper(): opt for opt in options}
     parsed = [s.strip().upper() for s in re.split(r"[,\s]+", raw) if s.strip()]
     picked = [option_map[p] for p in parsed if p in option_map]
@@ -122,8 +121,13 @@ class QwenProvider(AIProvider):
     DEFAULT_MODEL = "Qwen/Qwen3.8-Flash-Next"
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
-        from openai import OpenAI
-        self.client = OpenAI(base_url=self.BASE_URL, api_key=api_key, timeout=_TIMEOUT, max_retries=0)
+        from openai import DefaultHttpxClient, OpenAI
+        # trust_env=False: ModelScope is reached directly, like Yuketang, so a
+        # proxy can't eat into the answer window.
+        self.client = OpenAI(
+            base_url=self.BASE_URL, api_key=api_key, timeout=_TIMEOUT, max_retries=0,
+            http_client=DefaultHttpxClient(trust_env=False),
+        )
         self.model = model
 
     def _chat(self, cover_url: str, text: str) -> str:

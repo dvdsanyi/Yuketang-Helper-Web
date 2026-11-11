@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -15,13 +14,10 @@ from config import (
     account_exists,
     delete_account,
     get_active_account_id,
-    get_domain,
     get_poll_interval,
     list_accounts_summary,
     set_active_account_id,
-    set_domain,
     set_poll_interval,
-    update_account,
 )
 from routers._common import AccountDep
 
@@ -29,7 +25,7 @@ router = APIRouter()
 
 
 class SetActiveAccount(BaseModel):
-    account_id: Optional[str]
+    account_id: str
 
 
 class PollIntervalBody(BaseModel):
@@ -46,7 +42,7 @@ async def list_accounts_route():
 
 @router.put("/api/accounts/active")
 async def set_active_route(body: SetActiveAccount):
-    if body.account_id and not account_exists(body.account_id):
+    if not account_exists(body.account_id):
         raise HTTPException(status_code=404, detail="account not found")
     set_active_account_id(body.account_id)
     return {"ok": True, "active_account_id": get_active_account_id()}
@@ -58,7 +54,7 @@ async def create_account_route(body: DomainModel):
     login completes."""
     aid = f"pending-{uuid.uuid4().hex[:8]}"
     with state.pending_lock:
-        state.pending[aid] = {"domain": body.domain}
+        state.pending[aid] = body.domain
     return {"ok": True, "account_id": aid}
 
 
@@ -73,24 +69,6 @@ async def delete_account_route(account_id: str):
     event_log.clear(account_id)
     delete_account(account_id)
     return {"ok": True, "active_account_id": get_active_account_id()}
-
-
-@router.post("/api/accounts/{account_id}/logout")
-async def logout_account_route(account_id: str = AccountDep):
-    stop_monitor(account_id)
-    update_account(account_id, {"sessionid": "", "user": {}, "course_list": []})
-    return {"ok": True}
-
-
-@router.get("/api/accounts/{account_id}/domain")
-async def get_account_domain(account_id: str = AccountDep):
-    return {"domain": get_domain(account_id)}
-
-
-@router.put("/api/accounts/{account_id}/domain")
-async def set_account_domain(body: DomainModel, account_id: str = AccountDep):
-    set_domain(account_id, body.domain)
-    return {"ok": True, "domain": body.domain}
 
 
 @router.get("/api/accounts/{account_id}/poll-interval")

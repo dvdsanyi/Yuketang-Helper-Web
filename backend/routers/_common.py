@@ -1,12 +1,13 @@
 """Helpers shared across routers — kept here so cross-router imports don't
 turn into a tangle (e.g. pushdeer_router importing ActiveKeyBody from ai)."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import Depends, HTTPException, Path
 from pydantic import BaseModel
 
-import state
+from config import account_exists
 
 
 class ActiveKeyBody(BaseModel):
@@ -24,7 +25,8 @@ def mask_secret(raw: str) -> str:
 
 def _require_account(account_id: str = Path(...)) -> str:
     """FastAPI dependency — 404 unless `account_id` exists in the config."""
-    state.require_account(account_id)
+    if not account_exists(account_id):
+        raise HTTPException(status_code=404, detail="account not found")
     return account_id
 
 

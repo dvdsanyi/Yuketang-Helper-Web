@@ -42,8 +42,9 @@ def _path(account_id: str) -> Path:
 
 
 def append(account_id: str, event: dict) -> None:
-    # Place `logged_at` first so a caller-provided value in `event` wins.
-    record = {"logged_at": datetime.now().isoformat(timespec="seconds"), **event}
+    # With the UTC offset, so a browser in another timezone than this process
+    # (Docker runs in UTC) still shows the event at the right local time.
+    record = {"logged_at": datetime.now().astimezone().isoformat(timespec="seconds"), **event}
     p = _path(account_id)
     with _lock_for(account_id):
         with open(p, "a", encoding="utf-8") as f:
@@ -61,7 +62,7 @@ def load_recent(account_id: str, n: int = 50) -> list:
     if not p.exists():
         return []
     with _lock_for(account_id):
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             tail = deque(f, maxlen=n)
     return [json.loads(line) for line in tail if line.strip()]
 
@@ -76,7 +77,7 @@ def clear(account_id: str) -> None:
 
 
 def _trim(p: Path) -> None:
-    with open(p, "r", encoding="utf-8") as f:
+    with open(p, encoding="utf-8") as f:
         tail = deque(f, maxlen=MAX_EVENTS)
     if len(tail) < MAX_EVENTS:
         return

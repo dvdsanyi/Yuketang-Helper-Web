@@ -5,7 +5,6 @@ Runs against a fake Yuketang — no network, no config, no pytest:
     python tests/test_reliability.py
 """
 
-import json
 import os
 import sys
 import tempfile
@@ -55,8 +54,6 @@ class Fake:
             if not self.checkin_ok:
                 raise RuntimeError("network down")
             return SimpleNamespace(headers={}, json=lambda: {"code": 0, "data": {"lessonToken": "tok"}})
-        if "basic-info" in url:
-            return SimpleNamespace(headers={}, json=lambda: {"code": 0, "data": {"teacher": {"name": "T"}}})
         if "presentation/fetch" in url:
             self.fetches += 1
             if self.fetches <= self.fail_fetch:
@@ -79,7 +76,7 @@ def make_lesson(fake, **course_config):
     lesson_mod.http_request = fake
     lesson_mod.get_account = lambda aid: {"user": {"id": 1, "name": "u"}}
     events = []
-    cfg = {"type1": "random", "answer_last5s": False, **course_config}
+    cfg = {"type1": "random", "answer_near_deadline": False, **course_config}
     les = Lesson("acct", {"lessonid": 9, "lessonname": "L", "classroomid": 3},
                  "sid", "pro.yuketang.cn", cfg, lambda t, d: events.append((t, d)))
     les.auth = "tok"
@@ -153,7 +150,7 @@ def test_answering():
     remaining = l._remaining_limit(l._problems[PROB])
     check("deadline recovered from the problem's own clock", 28 <= remaining <= 30, remaining)
 
-    f = Fake(); l, ev = make_lesson(f, answer_last5s=True)
+    f = Fake(); l, ev = make_lesson(f, answer_near_deadline=True)
     l._dispatch(HELLO)
     started = time.time()
     l._dispatch({**UNLOCK, "problem": {**UNLOCK["problem"], "limit": 31}})
@@ -163,11 +160,11 @@ def test_answering():
     check("a lesson ending mid-hold submits instead of dropping the answer",
           len(f.submissions) == 1 and time.time() - started < 3, f.submissions)
 
-    l, ev = make_lesson(Fake(), answer_last5s=True)
+    l, ev = make_lesson(Fake(), answer_near_deadline=True)
     hold, _ = l._submit_window(60, "random")
     check("near-deadline submits 10-15s before the deadline", 45 <= hold <= 50, hold)
 
-    f = Fake(); l, ev = make_lesson(f, answer_last5s=True)
+    f = Fake(); l, ev = make_lesson(f, answer_near_deadline=True)
     l._dispatch(HELLO)
     l._dispatch({**UNLOCK, "problem": {**UNLOCK["problem"], "limit": 31}})
     time.sleep(0.2)
@@ -249,13 +246,14 @@ def test_ai():
     check("a ModelScope reply without choices raises a readable error", "choices is null" in reason, reason)
 
     stub_ai(lambda: time.sleep(30) or ["A"])  # provider hangs past the deadline
-    f = Fake(); l, ev = make_lesson(f, type1="ai", answer_last5s=True)
+    f = Fake(); l, ev = make_lesson(f, type1="ai", answer_near_deadline=True)
     l._dispatch(HELLO)
     started = time.time()
     l._dispatch({**UNLOCK, "problem": {**UNLOCK["problem"], "limit": 7}})
     settle()
-    check("a hung AI still submits a fallback inside the deadline",
-          len(f.submissions) == 1 and time.time() - started < 6.5, round(time.time() - started, 1))
+    elapsed = time.time() - started
+    check("a hung AI is waited for, then a fallback goes in before the deadline",
+          len(f.submissions) == 1 and 4 < elapsed < 6.5, round(elapsed, 1))
 
 
 # ----------------------------------------------------------------- check-in
@@ -321,6 +319,40 @@ def test_poll_loop():
     check("an expired session is pushed to the phone", pushed == ["acct"], pushed)
 
 
+# ----------------------------------------------------------- course toggle
+
+def test_course_toggle():
+    enabled = {"on": True}
+    monitor_mod.get_course_config = lambda aid, cid: {"course_enabled": enabled["on"]}
+
+    class StubLesson:
+        def __init__(self, lesson_data, **kw):
+            self.lessonid, self.lessonname, self.classroomid = lesson_data["lessonid"], "L", 3
+            self._stopped = threading.Event()
+        def start_lesson(self): self._stopped.wait(5)
+        def stop_lesson(self): self._stopped.set()
+
+    monitor_mod.Lesson = StubLesson
+    m, events = monitor_mod.Monitor("acct", None), []
+    m._emit = lambda t, d: events.append(t)
+    m._running = True
+    poll = [{"lessonId": 9, "classroomId": 3, "courseName": "L"}]
+
+    m._sync_lessons(poll, "pro.yuketang.cn", "sid")
+    check("a live class of an enabled course is joined", list(m._active_lessons) == [9], m._active_lessons)
+    enabled["on"] = False
+    m._sync_lessons(poll, "pro.yuketang.cn", "sid")
+    check("turning a course off mid-class leaves the class",
+          m._active_lessons == {} and events == ["lesson_start", "lesson_end"], events)
+    m._sync_lessons(poll, "pro.yuketang.cn", "sid")
+    check("a live class of a disabled course is not joined", m._active_lessons == {} and len(events) == 2, events)
+
+    enabled["on"] = True
+    m._running = False  # stop() ran while the poll was in flight
+    m._sync_lessons(poll, "pro.yuketang.cn", "sid")
+    check("a stopped monitor registers no new lesson", m._active_lessons == {} and len(events) == 2, events)
+
+
 # ---------------------------------------------------------------- push text
 
 def test_push_text():
@@ -338,6 +370,7 @@ if __name__ == "__main__":
     test_ai()
     test_checkin()
     test_poll_loop()
+    test_course_toggle()
     test_push_text()
     print("\nALL PASS" if not failures else f"\n{len(failures)} FAILED: {failures}")
     sys.exit(1 if failures else 0)

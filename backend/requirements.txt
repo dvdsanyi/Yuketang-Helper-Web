@@ -2,7 +2,6 @@ fastapi==0.142.4
 uvicorn[standard]==0.54.0
 websocket-client==1.9.2
 requests==2.34.2
-python-multipart==0.0.32
 pydantic==2.13.5
 google-genai==2.29.0
 openai==3.26.0

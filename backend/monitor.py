@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import threading
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import event_log
 import pushdeer
 from config import (
     api_url, get_course_config, get_domain, get_poll_interval,
-    get_sessionid, http_request, make_headers, update_course_config,
+    get_sessionid, http_request, make_headers,
 )
 from lesson import Lesson
 
@@ -28,7 +28,7 @@ class Monitor:
         self,
         account_id: str,
         event_queue: asyncio.Queue,
-        on_session_expired: Optional[Callable[[str], None]] = None,
+        on_session_expired: Callable[[str], None] | None = None,
     ) -> None:
         self.account_id = account_id
         self.event_queue = event_queue
@@ -36,8 +36,8 @@ class Monitor:
         self._active_lessons: dict[int, Lesson] = {}
         self._lock = threading.Lock()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         # Wakes the poll loop early when poll_interval is reduced.
         self._wake_event = threading.Event()
 
@@ -125,8 +125,6 @@ class Monitor:
         """Give up on this account's sessionid: stop every lesson WS so they
         don't keep hammering Yuketang, and tell the app to clear the login."""
         logger.warning(f"[{self.account_id}] Session expired: {message}")
-        self._emit("session_expired", {"message": message or "Session expired"})
-        pushdeer.send_session_expired(self.account_id)
         with self._lock:
             lessons = list(self._active_lessons.values())
             self._active_lessons.clear()
@@ -134,6 +132,10 @@ class Monitor:
             lesson.stop_lesson()
         if self._on_session_expired:
             self._on_session_expired(self.account_id)
+        # Announced only once the login is cleared: the Dashboard reloads the
+        # account on this event and must find it logged out.
+        self._emit("session_expired", {"message": message or "Session expired"})
+        pushdeer.send_session_expired(self.account_id)
         self._running = False
 
     def _sync_lessons(self, lesson_list: list, domain: str, sessionid: str) -> None:
@@ -141,55 +143,49 @@ class Monitor:
 
         for item in lesson_list:
             lesson_id = item["lessonId"]
+            course_config = get_course_config(self.account_id, str(item["classroomId"]))
+            if not course_config["course_enabled"]:
+                # Kept out of incoming_ids, so a lesson that is already running
+                # is evicted below when its course is turned off mid-class.
+                continue
             incoming_ids.add(lesson_id)
 
             with self._lock:
-                already_tracked = lesson_id in self._active_lessons
-
-            if not already_tracked:
-                lesson_name = item.get("courseName", "Unknown")
-                lesson_data = {
-                    "lessonid": lesson_id,
-                    "lessonname": lesson_name,
-                    "classroomid": item["classroomId"],
-                }
-                classroom_id = str(item["classroomId"])
-                course_config = get_course_config(self.account_id, classroom_id)
-                if course_config.get("name") != lesson_name:
-                    course_config["name"] = lesson_name
-                    update_course_config(self.account_id, classroom_id, {"name": lesson_name})
-                if not course_config.get("course_enabled", True):
-                    logger.info(
-                        f"[{self.account_id}] Skipping lesson {lesson_id} ({lesson_name}): course disabled"
-                    )
-                    # Drop from incoming so we re-evaluate next poll (cheap)
-                    # but don't emit lesson_start.
-                    incoming_ids.discard(lesson_id)
+                if lesson_id in self._active_lessons:
                     continue
-                lesson = Lesson(
-                    account_id=self.account_id,
-                    lesson_data=lesson_data,
-                    sessionid=sessionid,
-                    domain=domain,
-                    course_config=course_config,
-                    on_event=self._emit,
-                )
 
-                with self._lock:
-                    self._active_lessons[lesson_id] = lesson
-
-                self._emit("lesson_start", {
-                    "lesson": lesson.lessonname,
+            lesson = Lesson(
+                account_id=self.account_id,
+                lesson_data={
                     "lessonid": lesson_id,
-                    "message": f"Started monitoring: {lesson.lessonname}",
-                })
+                    "lessonname": item.get("courseName", "Unknown"),
+                    "classroomid": item["classroomId"],
+                },
+                sessionid=sessionid,
+                domain=domain,
+                course_config=course_config,
+                on_event=self._emit,
+            )
 
-                threading.Thread(
-                    target=self._lesson_thread,
-                    args=(lesson,),
-                    daemon=True,
-                    name=f"lesson-{self.account_id}-{lesson_id}",
-                ).start()
+            with self._lock:
+                if not self._running:
+                    # stop() ran while this poll was in flight; a lesson
+                    # registered now would never be stopped.
+                    return
+                self._active_lessons[lesson_id] = lesson
+
+            self._emit("lesson_start", {
+                "lesson": lesson.lessonname,
+                "lessonid": lesson_id,
+                "message": f"Started monitoring: {lesson.lessonname}",
+            })
+
+            threading.Thread(
+                target=self._lesson_thread,
+                args=(lesson,),
+                daemon=True,
+                name=f"lesson-{self.account_id}-{lesson_id}",
+            ).start()
 
         with self._lock:
             ended = [lid for lid in self._active_lessons if lid not in incoming_ids]

@@ -1,10 +1,7 @@
 from fastapi import APIRouter
 
 import state
-from config import (
-    CourseSettingsModel,
-    get_account, get_course_config, update_course_config,
-)
+from config import CourseSettingsModel, get_account, update_course_config
 from routers._common import AccountDep
 
 router = APIRouter()
@@ -21,20 +18,11 @@ async def get_active_courses(account_id: str = AccountDep):
 @router.get("/api/accounts/{account_id}/courses/all")
 async def get_all_courses_route(account_id: str = AccountDep):
     acc = get_account(account_id) or {}
-    cached = acc.get("course_list", [])
     m = state.get_monitor(account_id)
-    active_classroom_ids: set[str] = (
-        {str(lesson["classroomid"]) for lesson in m.get_active_lessons()} if m else set()
-    )
+    active_classroom_ids = {str(lesson["classroomid"]) for lesson in m.get_active_lessons()} if m else set()
     return [
-        {
-            "classroom_id": c["classroom_id"],
-            "name": c["name"],
-            "classroom_name": c["classroom_name"],
-            "teacher_name": c["teacher_name"],
-            "active": c["classroom_id"] in active_classroom_ids,
-        }
-        for c in cached
+        {**c, "active": c["classroom_id"] in active_classroom_ids}
+        for c in acc.get("course_list", [])
     ]
 
 
@@ -45,14 +33,8 @@ async def get_course_defaults(_: str = AccountDep):
 
 @router.get("/api/accounts/{account_id}/courses/settings")
 async def get_all_course_settings(account_id: str = AccountDep):
-    acc = get_account(account_id) or {}
-    courses = acc.get("courses", {})
-    return {cid: get_course_config(account_id, cid) for cid in courses}
-
-
-@router.get("/api/accounts/{account_id}/courses/settings/{course_id}")
-async def get_course_settings(course_id: str, account_id: str = AccountDep):
-    return get_course_config(account_id, course_id)
+    """Settings of the courses that have been changed; the rest use the defaults."""
+    return (get_account(account_id) or {}).get("courses", {})
 
 
 @router.put("/api/accounts/{account_id}/courses/settings/{course_id}")

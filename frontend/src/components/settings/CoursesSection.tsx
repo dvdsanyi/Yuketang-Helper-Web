@@ -1,14 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import MiddleTruncate from '../MiddleTruncate'
 import Switch from '../Switch'
 import type {
   ChoiceAnswerMode,
-  CourseConfig,
   CourseItem,
   CourseSettings,
   CoursesMap,
   NotificationSub,
+  ShortAnswerMode,
 } from '../../types'
 
 // The three notification "channels" share the same NotificationSub schema;
@@ -22,27 +22,19 @@ const NOTIF_CHANNELS = [
   labelKey: string
 }>
 
-// Strip the UI-only `name` field so the payload matches backend CourseSettingsModel.
-function toPayload(c: CourseConfig | CourseSettings): CourseSettings {
-  const {
-    type1, type2, type3, type4, type5,
-    course_enabled, answer_last5s, auto_danmu, auto_redpacket,
-    danmu_threshold, notification, voice_notification, pushdeer_notification,
-  } = c
-  return {
-    type1, type2, type3, type4, type5,
-    course_enabled, answer_last5s, auto_danmu, auto_redpacket,
-    danmu_threshold, notification, voice_notification, pushdeer_notification,
-  }
-}
-
-function fingerprint(c: CourseConfig): string {
-  return JSON.stringify(toPayload(c))
-}
-
-interface CourseState extends CourseConfig {
+interface CourseState extends CourseSettings {
   courseId: string
+  name: string
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
+}
+
+// Drop the UI-only fields so the payload matches backend CourseSettingsModel.
+function toPayload({ courseId, name, saveStatus, ...settings }: CourseState): CourseSettings {
+  return settings
+}
+
+function fingerprint(c: CourseState): string {
+  return JSON.stringify(toPayload(c))
 }
 
 function buildCourseStates(
@@ -50,27 +42,12 @@ function buildCourseStates(
   settings: CoursesMap,
   defaults: CourseSettings,
 ): CourseState[] {
-  return allCourses.map((c) => {
-    const cfg = settings[c.classroom_id] ?? ({} as Partial<CourseConfig>)
-    return {
-      courseId: c.classroom_id,
-      name: c.name,
-      type1: cfg.type1 ?? defaults.type1,
-      type2: cfg.type2 ?? defaults.type2,
-      type3: cfg.type3 ?? defaults.type3,
-      type4: cfg.type4 ?? defaults.type4,
-      type5: cfg.type5 ?? defaults.type5,
-      course_enabled: cfg.course_enabled ?? defaults.course_enabled,
-      answer_last5s: cfg.answer_last5s ?? defaults.answer_last5s,
-      auto_danmu: cfg.auto_danmu ?? defaults.auto_danmu,
-      auto_redpacket: cfg.auto_redpacket ?? defaults.auto_redpacket,
-      danmu_threshold: cfg.danmu_threshold ?? defaults.danmu_threshold,
-      notification: { ...defaults.notification, ...cfg.notification },
-      voice_notification: { ...defaults.voice_notification, ...cfg.voice_notification },
-      pushdeer_notification: { ...defaults.pushdeer_notification, ...cfg.pushdeer_notification },
-      saveStatus: 'idle',
-    }
-  })
+  return allCourses.map((c) => ({
+    ...(settings[c.classroom_id] ?? defaults),
+    courseId: c.classroom_id,
+    name: c.name,
+    saveStatus: 'idle',
+  }))
 }
 
 function NotificationSection({
@@ -144,19 +121,19 @@ function QuizModeSelect<T extends string>({
   )
 }
 
-// Full Cartesian product of (mode × answer_last5s × limit) with the resulting
+// Full Cartesian product of (mode × answer_near_deadline × limit) with the resulting
 // submission behavior. Mirrors backend/lesson.py:_submit_window. Random and
 // Blank share identical timing logic, so they share a single "Fallback" row
 // group.
-const TIMING_ROWS: { mode: 'Ai' | 'Fallback'; last5s: 'On' | 'Off'; limit: 'Limited' | 'Unlimited' }[] = [
-  { mode: 'Ai',       last5s: 'On',  limit: 'Limited'   },
-  { mode: 'Ai',       last5s: 'On',  limit: 'Unlimited' },
-  { mode: 'Ai',       last5s: 'Off', limit: 'Limited'   },
-  { mode: 'Ai',       last5s: 'Off', limit: 'Unlimited' },
-  { mode: 'Fallback', last5s: 'On',  limit: 'Limited'   },
-  { mode: 'Fallback', last5s: 'On',  limit: 'Unlimited' },
-  { mode: 'Fallback', last5s: 'Off', limit: 'Limited'   },
-  { mode: 'Fallback', last5s: 'Off', limit: 'Unlimited' },
+const TIMING_ROWS: { mode: 'Ai' | 'Fallback'; nearDeadline: 'On' | 'Off'; limit: 'Limited' | 'Unlimited' }[] = [
+  { mode: 'Ai',       nearDeadline: 'On',  limit: 'Limited'   },
+  { mode: 'Ai',       nearDeadline: 'On',  limit: 'Unlimited' },
+  { mode: 'Ai',       nearDeadline: 'Off', limit: 'Limited'   },
+  { mode: 'Ai',       nearDeadline: 'Off', limit: 'Unlimited' },
+  { mode: 'Fallback', nearDeadline: 'On',  limit: 'Limited'   },
+  { mode: 'Fallback', nearDeadline: 'On',  limit: 'Unlimited' },
+  { mode: 'Fallback', nearDeadline: 'Off', limit: 'Limited'   },
+  { mode: 'Fallback', nearDeadline: 'Off', limit: 'Unlimited' },
 ]
 
 function TimingTooltip() {
@@ -178,11 +155,11 @@ function TimingTooltip() {
           </thead>
           <tbody>
             {TIMING_ROWS.map((r, i) => {
-              const behaviorKey = `${r.mode.toLowerCase()}${r.last5s}${r.limit}` // e.g. aiOnLimited
+              const behaviorKey = `${r.mode.toLowerCase()}${r.nearDeadline}${r.limit}` // e.g. aiOnLimited
               return (
                 <tr key={i}>
                   <td>{t(k(`mode${r.mode}`))}</td>
-                  <td>{t(k(`state${r.last5s}`))}</td>
+                  <td>{t(k(`state${r.nearDeadline}`))}</td>
                   <td>{t(k(`limit${r.limit === 'Limited' ? 'Yes' : 'No'}`))}</td>
                   <td>{t(k(behaviorKey))}</td>
                 </tr>
@@ -209,26 +186,21 @@ export default function CoursesSection({
   pushdeerKeyCount: number
 }) {
   const { t } = useTranslation()
-  const [courses, setCourses] = useState<CourseState[]>(() => buildCourseStates(allCourses, settings, defaults))
+  const [courses, setCourses] = useState(() => buildCourseStates(allCourses, settings, defaults))
+  // Fingerprint of what the server holds for each course; Apply is offered
+  // only while the card differs from it.
+  const [saved, setSaved] = useState(() =>
+    Object.fromEntries(courses.map((c) => [c.courseId, fingerprint(c)])),
+  )
   type ApplyAll = { courseId: string; status: 'success' | 'error' }
   const [appliedAll, setAppliedAll] = useState<ApplyAll | null>(null)
-  const savedRef = useRef<Record<string, string>>({})
 
-  // Re-seed when the upstream data changes (e.g. account switch).
-  useEffect(() => {
-    const built = buildCourseStates(allCourses, settings, defaults)
-    setCourses(built)
-    const snap: Record<string, string> = {}
-    for (const c of built) snap[c.courseId] = fingerprint(c)
-    savedRef.current = snap
-  }, [allCourses, settings, defaults])
+  const isDirty = (course: CourseState) => fingerprint(course) !== saved[course.courseId]
 
-  const isDirty = (course: CourseState) => fingerprint(course) !== savedRef.current[course.courseId]
-
-  const updateField = <K extends keyof CourseConfig>(
+  const updateField = <K extends keyof CourseSettings>(
     courseId: string,
     field: K,
-    value: CourseConfig[K],
+    value: CourseSettings[K],
   ) => {
     setCourses((prev) =>
       prev.map((c) =>
@@ -249,7 +221,7 @@ export default function CoursesSection({
         body: JSON.stringify(toPayload(course)),
       })
       if (!resp.ok) throw new Error('Save failed')
-      savedRef.current[course.courseId] = fingerprint(course)
+      setSaved((prev) => ({ ...prev, [course.courseId]: fingerprint(course) }))
       patchCourse(course.courseId, { saveStatus: 'saved' })
       setTimeout(() => patchCourse(course.courseId, { saveStatus: 'idle' }), 2000)
     } catch {
@@ -270,46 +242,25 @@ export default function CoursesSection({
           .catch(() => false),
       ),
     )
-    setCourses((prev) => {
-      const updated = prev.map((c, i) => {
-        if (!results[i]) {
-          // Save failed — leave fields untouched and mark the row so the
-          // user can see which course(s) didn't accept the broadcast.
-          return { ...c, saveStatus: 'error' as const }
-        }
-        const next: CourseState = {
-          ...c,
-          ...payload,
-          notification: { ...payload.notification },
-          voice_notification: { ...payload.voice_notification },
-          pushdeer_notification: { ...payload.pushdeer_notification },
-          saveStatus: 'idle',
-        }
-        savedRef.current[c.courseId] = fingerprint(next)
-        return next
-      })
-      return updated
-    })
-    const allOk = results.every(Boolean)
-    setAppliedAll({ courseId: source.courseId, status: allOk ? 'success' : 'error' })
+    const applied = courses.filter((_, i) => results[i])
+    const appliedIds = new Set(applied.map((c) => c.courseId))
+    // A course that rejected the broadcast keeps its fields and is marked, so
+    // the user can see which one(s) didn't take it.
+    setCourses((prev) =>
+      prev.map((c) =>
+        appliedIds.has(c.courseId) ? { ...c, ...payload, saveStatus: 'idle' } : { ...c, saveStatus: 'error' },
+      ),
+    )
+    setSaved((prev) => ({
+      ...prev,
+      ...Object.fromEntries(applied.map((c) => [c.courseId, fingerprint({ ...c, ...payload })])),
+    }))
+    setAppliedAll({ courseId: source.courseId, status: applied.length === courses.length ? 'success' : 'error' })
     setTimeout(() => setAppliedAll(null), 2000)
   }
 
   const resetToDefault = (courseId: string) => {
-    setCourses((prev) =>
-      prev.map((c) =>
-        c.courseId === courseId
-          ? {
-              ...c,
-              ...toPayload(defaults),
-              notification: { ...defaults.notification },
-              voice_notification: { ...defaults.voice_notification },
-              pushdeer_notification: { ...defaults.pushdeer_notification },
-              saveStatus: 'idle',
-            }
-          : c,
-      ),
-    )
+    patchCourse(courseId, { ...defaults, saveStatus: 'idle' })
   }
 
   const choiceModes: { value: ChoiceAnswerMode; label: string }[] = [
@@ -317,7 +268,7 @@ export default function CoursesSection({
     { value: 'random', label: t('settings.random') },
     { value: 'off', label: t('settings.disabled') },
   ]
-  const shortAnswerModes: { value: CourseConfig['type5']; label: string }[] = [
+  const shortAnswerModes: { value: ShortAnswerMode; label: string }[] = [
     { value: 'ai', label: 'AI' },
     { value: 'blank', label: t('settings.blank') },
     { value: 'off', label: t('settings.disabled') },
@@ -393,8 +344,8 @@ export default function CoursesSection({
                     </label>
                     <Switch
                       label={t('settings.answerNearDeadline')}
-                      checked={course.answer_last5s}
-                      onChange={(v) => updateField(course.courseId, 'answer_last5s', v)}
+                      checked={course.answer_near_deadline}
+                      onChange={(v) => updateField(course.courseId, 'answer_near_deadline', v)}
                     />
                   </div>
                   <div className="form-row">

@@ -37,6 +37,9 @@ export default function Settings() {
       setLoading(false)
       return
     }
+    // Switching accounts mid-load must not let the previous account's answer
+    // land under the new one.
+    let stale = false
     setLoading(true)
     Promise.all([
       fetch(`${base}/courses/all`).then((r) => r.json()),
@@ -49,10 +52,17 @@ export default function Settings() {
       .then(([allCourses, settings, ai, defaults, pushdeer, poll]: [
         CourseItem[], CoursesMap, AISettings, CourseSettings, PushdeerSettings, PollIntervalSettings,
       ]) => {
-        setData({ allCourses, settings, ai, defaults, pushdeer, poll })
+        if (!stale) setData({ allCourses, settings, ai, defaults, pushdeer, poll })
       })
-      .catch(() => setData(null))
-      .finally(() => setLoading(false))
+      .catch(() => {
+        if (!stale) setData(null)
+      })
+      .finally(() => {
+        if (!stale) setLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [base])
 
   const reloadAi = async () => {

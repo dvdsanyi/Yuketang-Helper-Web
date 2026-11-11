@@ -8,6 +8,7 @@
     "success": "Login successful! Redirecting...",
     "refresh": "Refresh QR Code",
     "waiting": "Waiting for QR code...",
+    "qrFailed": "QR login failed",
     "note": "Note: Login only grants access to your Yuketang session for monitoring. All user data, session information, and keys are stored locally on your device only.",
     "server": "Server",
     "methodQR": "QR Code",

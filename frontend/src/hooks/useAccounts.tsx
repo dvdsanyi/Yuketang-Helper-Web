@@ -6,9 +6,8 @@ interface Ctx {
   loading: boolean
   activeAccount: AccountSummary | null
   refresh: () => Promise<void>
-  setActive: (id: string | null) => Promise<void>
+  setActive: (id: string) => Promise<void>
   deleteAccount: (id: string) => Promise<void>
-  logoutAccount: (id: string) => Promise<void>
 }
 
 const AccountsContext = createContext<Ctx | null>(null)
@@ -35,7 +34,7 @@ export function AccountsProvider({ children }: { children: ReactNode }) {
     refresh().catch(() => setLoading(false))
   }, [refresh])
 
-  const setActive = useCallback(async (id: string | null) => {
+  const setActive = useCallback(async (id: string) => {
     await fetch('/api/accounts/active', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -49,16 +48,11 @@ export function AccountsProvider({ children }: { children: ReactNode }) {
     await refresh()
   }, [refresh])
 
-  const logoutAccount = useCallback(async (id: string) => {
-    await fetch(`/api/accounts/${id}/logout`, { method: 'POST' })
-    await refresh()
-  }, [refresh])
-
   const activeAccount =
     state.accounts.find((a) => a.id === state.active_account_id) ?? null
 
   return (
-    <AccountsContext.Provider value={{ state, loading, activeAccount, refresh, setActive, deleteAccount, logoutAccount }}>
+    <AccountsContext.Provider value={{ state, loading, activeAccount, refresh, setActive, deleteAccount }}>
       {children}
     </AccountsContext.Provider>
   )

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import mimetypes
 import sys
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
@@ -108,21 +109,27 @@ async def _pushdeer_heartbeat_scheduler():
             await asyncio.sleep(60)
 
 
+def _refresh_cache(account_id: str) -> None:
+    try:
+        refresh_local_cache(account_id)
+    except Exception as e:
+        logging.getLogger("startup").warning(f"refresh cache failed for {account_id}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     broadcaster = asyncio.create_task(_broadcast_events())
     heartbeat_task = asyncio.create_task(_pushdeer_heartbeat_scheduler())
 
-    startup_log = logging.getLogger("startup")
     for summary in list_accounts_summary():
-        aid = summary["id"]
         if not summary["logged_in"]:
             continue
-        try:
-            refresh_local_cache(aid)
-        except Exception as e:
-            startup_log.warning(f"refresh cache failed for {aid}: {e}")
-        start_monitor(aid)
+        start_monitor(summary["id"])
+        # On a thread, not awaited: with Yuketang slow or unreachable the retries
+        # run for minutes, and until startup finishes the UI doesn't load.
+        threading.Thread(
+            target=_refresh_cache, args=(summary["id"],), daemon=True, name=f"refresh-{summary['id']}",
+        ).start()
 
     yield
 

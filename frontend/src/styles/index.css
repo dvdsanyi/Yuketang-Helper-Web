@@ -386,6 +386,18 @@ button:disabled {
   color: var(--color-success);
 }
 
+.qr-error {
+  color: var(--color-danger);
+}
+
+/* An upstream error can run to a paragraph: show its start, the rest on hover. */
+.qr-error-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
 /* ===========================
    Spinner
    =========================== */
@@ -1323,6 +1335,7 @@ a.app-footer-version:hover {
   color: var(--color-danger);
   font-size: 0.85rem;
   margin-bottom: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
 .login-submit {

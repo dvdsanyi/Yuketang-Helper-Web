@@ -28,7 +28,7 @@ export interface CourseSettings {
   type4: 'off'
   type5: ShortAnswerMode
   course_enabled: boolean
-  answer_last5s: boolean
+  answer_near_deadline: boolean
   auto_danmu: boolean
   auto_redpacket: boolean
   danmu_threshold: number
@@ -37,11 +37,7 @@ export interface CourseSettings {
   pushdeer_notification: NotificationSub
 }
 
-export interface CourseConfig extends CourseSettings {
-  name: string
-}
-
-export type CoursesMap = Record<string, CourseConfig>
+export type CoursesMap = Record<string, CourseSettings>
 
 export interface PollIntervalSettings {
   poll_interval: number

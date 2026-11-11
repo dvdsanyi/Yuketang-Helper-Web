@@ -8,10 +8,10 @@ import sys
 import webbrowser
 from pathlib import Path
 
-# When frozen, add the backend directory (bundled inside _MEIPASS) to sys.path
-# and set SSL certificate path so that outbound HTTPS/WSS connections work.
+# When frozen, the backend modules are compiled into the executable (the spec
+# puts backend/ on PyInstaller's search path); only the SSL certificate path
+# has to be set so that outbound HTTPS/WSS connections work.
 if getattr(sys, "frozen", False):
-    sys.path.insert(0, str(Path(sys._MEIPASS) / "backend"))
     import certifi
     os.environ["SSL_CERT_FILE"] = certifi.where()
     os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()

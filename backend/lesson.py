@@ -4,19 +4,19 @@ import random
 import threading
 import time
 from enum import Enum, auto
-from typing import Any, Callable, Iterable, NamedTuple, Optional
+from collections.abc import Callable, Iterable
+from typing import Any, NamedTuple
 
 import websocket
 
 from ai_provider import create_provider
-from config import api_url, get_account, get_ai_config, http_request, make_headers
+from config import api_url, get_account, get_ai_config, http_request, make_headers, ws_direct
 
 logger = logging.getLogger(__name__)
 
 # API URLs
 URL_WSS = "wss://{domain}/wsapp/"
 URL_CHECKIN = "https://{domain}/api/v3/lesson/checkin"
-URL_BASIC_INFO = "https://{domain}/api/v3/lesson/basic-info"
 URL_DANMU_SEND = "https://{domain}/api/v3/lesson/danmu/send"
 URL_PROBLEM_ANSWER = "https://{domain}/api/v3/lesson/problem/answer"
 URL_PRESENTATION_FETCH = "https://{domain}/api/v3/lesson/presentation/fetch?presentation_id={presentation_id}"
@@ -69,14 +69,13 @@ class Lesson:
         self.lessonid: int = lesson_data["lessonid"]
         self.lessonname: str = lesson_data["lessonname"]
         self.classroomid: int = lesson_data["classroomid"]
-        self.sessionid = sessionid
         self.domain = domain
         self.course_config = course_config
         self.on_event = on_event
 
         self.headers = make_headers(domain, sessionid)
-        self.auth: Optional[str] = None
-        self.wsapp: Optional[websocket.WebSocketApp] = None
+        self.auth: str | None = None
+        self.wsapp: websocket.WebSocketApp | None = None
         self._stop_reason: _Stop = _Stop.NONE
         # Set together with _stop_reason: wakes answer threads that are holding
         # for their submission window so they submit now instead of expiring.
@@ -104,9 +103,8 @@ class Lesson:
         self._server_offset = 0.0
         self._frames = 0  # frames received on the current connection
 
-        self.user_uid: Optional[int] = None
-        self.user_uname: Optional[str] = None
-        self.teacher_name: Optional[str] = None
+        self.user_uid: int | None = None
+        self.user_uname: str | None = None
 
     def _is_running(self) -> bool:
         return self._stop_reason is _Stop.NONE
@@ -143,7 +141,7 @@ class Lesson:
                 on_open=self._on_open,
                 on_message=self._on_message,
             )
-            self.wsapp.run_forever(ping_interval=30, ping_timeout=10)
+            self.wsapp.run_forever(ping_interval=30, ping_timeout=10, **ws_direct(self.domain))
             if not self._is_running():
                 break
             silent = silent + 1 if self._frames == 0 else 0
@@ -177,12 +175,20 @@ class Lesson:
             "showStatus": True,
             "fromStart": "50",
         }
-        r = http_request("POST", api_url(self.domain, URL_DANMU_SEND), headers=self.headers, json=payload)
+        # Runs on its own thread: a failure has to become an event, or it
+        # would end in an uncaught traceback the user never sees.
+        try:
+            r = http_request("POST", api_url(self.domain, URL_DANMU_SEND), headers=self.headers, json=payload)
+            result = r.json()
+        except Exception as e:
+            logger.warning(f"[{self.account_id}] danmu send failed: {e}")
+            result = {"code": -1, "msg": str(e)}
         self.on_event("danmu", {
             "lesson": self.lessonname,
             "lessonid": self.lessonid,
             "content": content,
-            "status": "success" if r.json()["code"] == 0 else "error",
+            "status": "success" if result.get("code") == 0 else "error",
+            "message": result.get("msg", ""),
         })
 
     def _grab_red_packet(self, red_envelope_id: int) -> None:
@@ -190,8 +196,12 @@ class Lesson:
             "lessonId": self.lessonid,
             "redEnvelopeId": red_envelope_id,
         }
-        r = http_request("POST", api_url(self.domain, URL_REDENVELOPE_PREPARE), headers=self.headers, json=payload)
-        result = r.json()
+        try:
+            r = http_request("POST", api_url(self.domain, URL_REDENVELOPE_PREPARE), headers=self.headers, json=payload)
+            result = r.json()
+        except Exception as e:
+            logger.warning(f"[{self.account_id}] red packet {red_envelope_id} grab failed: {e}")
+            result = {"code": -1, "msg": str(e)}
         self.on_event("red_packet", {
             "lesson": self.lessonname,
             "lessonid": self.lessonid,
@@ -236,14 +246,6 @@ class Lesson:
         self.user_uid = user.get("id")
         self.user_uname = user.get("name")
 
-        # Cosmetic only (the teacher name shown in notifications) — never let it
-        # abort a lesson we have already checked into.
-        try:
-            info = http_request("GET", api_url(self.domain, URL_BASIC_INFO), headers=self.headers).json()["data"]
-            self.teacher_name = (info.get("teacher") or {}).get("name")
-        except Exception as e:
-            logger.warning(f"[{self.account_id}] basic-info fetch failed for lesson {self.lessonid}: {e}")
-
     # ------------------------------------------------------------------
     # Problem bookkeeping
     # ------------------------------------------------------------------
@@ -287,7 +289,7 @@ class Lesson:
     def _mode_for(self, problem: dict) -> str:
         return self.course_config.get(f"type{problem['problemType']}", "off")
 
-    def _skip_reason(self, problem: dict) -> Optional[str]:
+    def _skip_reason(self, problem: dict) -> str | None:
         if problem["problemType"] not in (1, 2, 3, 5):
             return "unsupported"
         if self._mode_for(problem) == "off":
@@ -329,7 +331,7 @@ class Lesson:
             self._answered.add(problemid)
             return True
 
-    def _answer_if_needed(self, problem: Optional[dict], limit: int, context: str) -> None:
+    def _answer_if_needed(self, problem: dict | None, limit: int, context: str) -> None:
         """The one way in to answering: both the live `unlockproblem` frame and
         the reconcile pass go through here, so the guards can't be bypassed."""
         if problem is None:
@@ -401,7 +403,7 @@ class Lesson:
         if problemtype == 2:
             return option_count
         if problemtype == 3:
-            return max(1, min(int(problem.get("pollingCount", 1)), option_count))
+            return max(1, min(int(problem.get("pollingCount") or 1), option_count))
         raise ValueError(f"Unsupported option problem type: {problemtype}")
 
     def _build_fallback_answer(
@@ -461,7 +463,7 @@ class Lesson:
             # every key would fail, so go straight to the fallback answer.
             raise RuntimeError("slide has no cover image")
         problemtype = problem["problemType"]
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for attempt in keys_to_try:
             try:
@@ -484,8 +486,8 @@ class Lesson:
     # Answer submission
     # ------------------------------------------------------------------
     #
-    # Timing (see `_submit_window`), by mode and the "answer near deadline"
-    # toggle (`answer_last5s` in the config):
+    # Timing (see `_submit_window`), by mode and the `answer_near_deadline`
+    # toggle:
     #   random/blank — near-deadline ON + deadline → submit `_DEADLINE_LEAD`
     #                  seconds before the deadline; otherwise immediately.
     #   ai           — near-deadline ON + deadline → wait for AI until that
@@ -493,6 +495,7 @@ class Lesson:
     #                  near-deadline OFF + deadline → submit as soon as AI
     #                  returns, capped at `limit - 1s` so the fallback fits;
     #                  no deadline → wait up to `_AI_MAX_WAIT`.
+    # A deadline shorter than `_DEADLINE_LEAD` is handled as near-deadline OFF.
     # After any deliberate hold we re-read the problem first, so an answer the
     # user gave by hand in the meantime is never replaced.
 
@@ -542,9 +545,12 @@ class Lesson:
             # No deadline known: submit immediately for fallback modes; AI mode
             # waits for the provider, bounded so a hang can't eat the answer.
             return (0.0, _AI_MAX_WAIT)
-        if self.course_config.get("answer_last5s", False):
-            target = max(0.0, limit - random.uniform(*_DEADLINE_LEAD))
-            return (target, target)
+        if self.course_config.get("answer_near_deadline", False):
+            target = limit - random.uniform(*_DEADLINE_LEAD)
+            if target > 0:
+                return (target, target)
+            # The deadline is closer than the lead: holding is pointless, and
+            # cutting the AI wait to zero would turn every answer into a guess.
         if mode == "ai":
             # Submit ASAP once AI returns; keep ~1s buffer for fallback.
             return (0.0, max(0.5, float(limit - 1)))
@@ -610,7 +616,7 @@ class Lesson:
 
         result_holder: list[Any] = [None]
         # Set only when the AI call raised; the message rides on the ai_failed event.
-        error_holder: list[Optional[str]] = [None]
+        error_holder: list[str | None] = [None]
         ai_done = threading.Event()
 
         logger.info(f"[{self.account_id}] Attempting AI answer for problem {problemid}")
@@ -717,7 +723,6 @@ class Lesson:
             self._load_presentations(presentation_ids)
 
         elif op == "unlockproblem":
-            problem_ref = data["problem"]
             # The frame names the problem by `prob` and its slide by `sid`;
             # either can be the key we hold it under.
             raw_id = problem_ref.get("prob") or problem_ref.get("sid")

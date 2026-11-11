@@ -4,10 +4,12 @@ import type { AIKeyEntry, AISettings, AIProviderName } from '../../types'
 import MiddleTruncate from '../MiddleTruncate'
 import Switch from '../Switch'
 
-const PROVIDER_LABELS: Record<string, string> = {
+const PROVIDER_LABELS: Record<AIProviderName, string> = {
   google: 'Google',
   qwen: 'ModelScope',
 }
+
+const EMPTY_KEY: AIKeyEntry = { name: '', provider: 'qwen', key: '' }
 
 export default function AISection({
   base,
@@ -19,7 +21,7 @@ export default function AISection({
   onReload: () => Promise<void>
 }) {
   const { t } = useTranslation()
-  const [newKey, setNewKey] = useState<AIKeyEntry>({ name: '', provider: 'qwen', key: '' })
+  const [newKey, setNewKey] = useState(EMPTY_KEY)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState(false)
 
@@ -31,10 +33,10 @@ export default function AISection({
       const resp = await fetch(`${base}/ai/keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newKey),
+        body: JSON.stringify({ ...newKey, name: newKey.name.trim(), key: newKey.key.trim() }),
       })
       if (!resp.ok) throw new Error('Add failed')
-      setNewKey({ name: '', provider: 'qwen', key: '' })
+      setNewKey(EMPTY_KEY)
       await onReload()
     } catch {
       setAddError(true)
@@ -76,7 +78,7 @@ export default function AISection({
               <div key={idx} className={`credential-item ${idx === ai.active_key ? 'credential-active' : ''}`}>
                 <div className="credential-info">
                   <MiddleTruncate className="credential-name" text={entry.name} />
-                  <span className="credential-meta">{PROVIDER_LABELS[entry.provider] ?? entry.provider}</span>
+                  <span className="credential-meta">{PROVIDER_LABELS[entry.provider]}</span>
                   <span className="credential-masked">{entry.key}</span>
                 </div>
                 <div className="credential-actions">
@@ -119,8 +121,9 @@ export default function AISection({
               value={newKey.provider}
               onChange={(e) => setNewKey((prev) => ({ ...prev, provider: e.target.value as AIProviderName }))}
             >
-              <option value="google">Google</option>
-              <option value="qwen">ModelScope</option>
+              {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
             <input
               type="password"

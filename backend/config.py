@@ -6,21 +6,8 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional
-
-# Yuketang must not go through a system/VPN proxy: sign-in and answering are
-# deadline-bound, and a proxied round-trip is the difference between a late
-# answer and none. Everything else (AI providers, PushDeer) still honours the
-# user's proxy settings.
-_NO_PROXY_DOMAINS = ",".join([
-    "pro.yuketang.cn",
-    "www.yuketang.cn",
-    "changjiang.yuketang.cn",
-    "huanghe.yuketang.cn",
-    "api-inference.modelscope.cn",
-])
-_existing_no_proxy = os.environ.get("NO_PROXY", "")
-os.environ["NO_PROXY"] = f"{_existing_no_proxy},{_NO_PROXY_DOMAINS}" if _existing_no_proxy else _NO_PROXY_DOMAINS
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import requests
 from platformdirs import user_data_dir
@@ -99,20 +86,15 @@ class CourseSettingsModel(BaseModel):
     type4: Literal["off"] = "off"
     type5: ShortAnswerMode = "ai"
     course_enabled: bool = True
-    # "Answer near deadline": hold submissions until shortly before the
-    # deadline. Off by default; a teacher closing a problem early would
-    # otherwise leave it unanswered.
-    answer_last5s: bool = False
+    # Hold submissions until shortly before the deadline. Off by default; a
+    # teacher closing a problem early would otherwise leave it unanswered.
+    answer_near_deadline: bool = False
     auto_danmu: bool = True
     auto_redpacket: bool = True
     danmu_threshold: PositiveInt = 3
     notification: NotificationSubModel = Field(default_factory=NotificationSubModel)
     voice_notification: NotificationSubModel = Field(default_factory=NotificationSubModel)
     pushdeer_notification: NotificationSubModel = Field(default_factory=NotificationSubModel)
-
-
-class CourseModel(CourseSettingsModel):
-    name: str = ""
 
 
 class AIKeyModel(BaseModel):
@@ -143,7 +125,7 @@ class CourseListItemModel(BaseModel):
     classroom_id: str
     name: str
     classroom_name: str = ""
-    teacher_name: Optional[str] = None
+    teacher_name: str | None = None
 
 
 class AccountModel(DomainModel):
@@ -151,23 +133,15 @@ class AccountModel(DomainModel):
     sessionid: str = ""
     user: dict = Field(default_factory=dict)
     course_list: list[CourseListItemModel] = Field(default_factory=list)
-    courses: dict[str, CourseModel] = Field(default_factory=dict)
+    courses: dict[str, CourseSettingsModel] = Field(default_factory=dict)
     ai: AIModel = Field(default_factory=AIModel)
     pushdeer: PushdeerModel = Field(default_factory=PushdeerModel)
     poll_interval: int = Field(default=DEFAULT_POLL_INTERVAL, ge=MIN_POLL_INTERVAL, le=MAX_POLL_INTERVAL)
 
 
 class ConfigModel(BaseModel):
-    active_account_id: Optional[str] = None
+    active_account_id: str | None = None
     accounts: dict[str, AccountModel] = Field(default_factory=dict)
-
-
-def new_empty_account(domain: str = DEFAULT_DOMAIN) -> dict:
-    return AccountModel(domain=domain).model_dump()
-
-
-def clamp_poll_interval(seconds: int) -> int:
-    return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, int(seconds)))
 
 
 def get_poll_interval(account_id: str) -> int:
@@ -176,7 +150,7 @@ def get_poll_interval(account_id: str) -> int:
 
 
 def set_poll_interval(account_id: str, seconds: int) -> int:
-    clamped = clamp_poll_interval(seconds)
+    clamped = max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, seconds))
     _patch_account(account_id, poll_interval=clamped)
     return clamped
 
@@ -200,7 +174,7 @@ def _write_config(cfg: dict) -> None:
     os.replace(tmp_path, _CONFIG_PATH)
 
 
-def _backup_invalid_config() -> Optional[Path]:
+def _backup_invalid_config() -> Path | None:
     """Rename the current config.json out of the way so we don't lose user data
     when the schema can't be parsed. Returns the backup path, or None on failure."""
     if not _CONFIG_PATH.exists():
@@ -218,7 +192,7 @@ def _backup_invalid_config() -> Optional[Path]:
 def get_config() -> dict:
     with config_lock:
         try:
-            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(_CONFIG_PATH, encoding="utf-8") as f:
                 raw = json.load(f)
             return ConfigModel.model_validate(raw).model_dump()
         except FileNotFoundError:
@@ -249,14 +223,14 @@ def account_display_name(acc: dict, account_id: str) -> str:
     return user.get("name") or acc.get("name") or str(account_id)
 
 
-def get_active_account_id() -> Optional[str]:
+def get_active_account_id() -> str | None:
     return get_config()["active_account_id"]
 
 
-def set_active_account_id(account_id: Optional[str]) -> None:
+def set_active_account_id(account_id: str) -> None:
     with config_lock:
         cfg = get_config()
-        cfg["active_account_id"] = account_id or None
+        cfg["active_account_id"] = account_id
         # cfg came from get_config() which already validated; skip re-validation.
         _write_config(cfg)
 
@@ -275,7 +249,7 @@ def list_accounts_summary() -> list[dict]:
     ]
 
 
-def get_account(account_id: str) -> Optional[dict]:
+def get_account(account_id: str) -> dict | None:
     return get_config()["accounts"].get(str(account_id))
 
 
@@ -291,24 +265,23 @@ def upsert_account(account_id: str, data: dict) -> None:
         _write_config(cfg)
 
 
-def _patch_account(account_id: str, *, subkey: Optional[str] = None, **patch: Any) -> None:
-    """Shared update helper for account, account.ai, account.pushdeer, account.courses.
+def _patch_account(account_id: str, *, subkey: str | None = None, **patch: Any) -> None:
+    """Shared update helper for account, account.ai and account.pushdeer.
 
     Caller decides whether to use `subkey`:
       _patch_account(id, sessionid="...")              → mutates acc directly
       _patch_account(id, subkey="ai", active_key=1)    → mutates acc["ai"]
       _patch_account(id, subkey="pushdeer", ...)       → mutates acc["pushdeer"]
 
-    If the account doesn't exist yet it is materialized as an empty account —
-    callers are expected to gate this via require_account / account_exists at
-    the route layer so we don't create ghost accounts from typos.
+    A missing account is left alone: routes check existence first, so it can
+    only have been deleted in between, and patching would bring it back empty.
     """
     with config_lock:
         cfg = get_config()
         accounts = cfg["accounts"]
         sid = str(account_id)
         if sid not in accounts:
-            accounts[sid] = new_empty_account()
+            return
         target = accounts[sid][subkey] if subkey else accounts[sid]
         target.update(patch)
         # Validate just the touched account so we still catch corrupt patches,
@@ -340,10 +313,6 @@ def get_domain(account_id: str) -> str:
     return acc["domain"] if acc else DEFAULT_DOMAIN
 
 
-def set_domain(account_id: str, domain: str) -> None:
-    _patch_account(account_id, domain=domain)
-
-
 def get_sessionid(account_id: str) -> str:
     acc = get_account(account_id)
     return acc["sessionid"] if acc else ""
@@ -352,20 +321,16 @@ def get_sessionid(account_id: str) -> str:
 def get_course_config(account_id: str, course_id: str) -> dict:
     acc = get_account(account_id)
     course = acc["courses"].get(str(course_id)) if acc else None
-    return CourseModel.model_validate(course or {}).model_dump()
+    return course or CourseSettingsModel().model_dump()
 
 
 def update_course_config(account_id: str, course_id: str, data: dict) -> None:
     with config_lock:
         cfg = get_config()
-        accounts = cfg["accounts"]
-        sid = str(account_id)
-        if sid not in accounts:
-            accounts[sid] = new_empty_account()
-        current = accounts[sid]["courses"].get(str(course_id), {})
-        accounts[sid]["courses"][str(course_id)] = (
-            CourseModel.model_validate({**current, **data}).model_dump()
-        )
+        acc = cfg["accounts"].get(str(account_id))
+        if acc is None:
+            return
+        acc["courses"][str(course_id)] = CourseSettingsModel.model_validate(data).model_dump()
         _write_config(cfg)
 
 
@@ -404,6 +369,19 @@ def api_url(domain: str, template: str, **kwargs: Any) -> str:
     return template.format(domain=domain, **kwargs)
 
 
+def ws_direct(domain: str) -> dict:
+    """run_forever() options that keep a Yuketang WebSocket off any proxy, for
+    the reason given in http_request. websocket-client honours `http_no_proxy`
+    only next to an explicit proxy host, so this names a placeholder host (one
+    that can never resolve) for the no-proxy entry to overrule."""
+    return {
+        "http_proxy_host": "direct.invalid",
+        "http_proxy_port": 1,
+        "proxy_type": "http",
+        "http_no_proxy": [domain],
+    }
+
+
 _http_log = logging.getLogger(f"{__name__}.http")
 
 # Yuketang serves a desktop layout when the UA looks like a desktop browser.
@@ -425,12 +403,20 @@ def http_request(
     kwargs.setdefault("timeout", timeout)
     headers = kwargs.setdefault("headers", {})
     headers.setdefault("User-Agent", _DEFAULT_UA)
+    # Yuketang is always reached directly, whatever proxy the environment or
+    # the system has configured: sign-in and answering are deadline-bound, and
+    # a proxied round-trip is the difference between a late answer and none.
+    # Every other host (PushDeer, slide images) follows the user's proxy
+    # settings. The lesson and login WebSockets opt out with ws_direct().
+    use_proxy_settings = urlsplit(url).hostname not in VALID_DOMAINS
 
-    last_exc: Optional[Exception] = None
-    last_response: Optional[requests.Response] = None
+    last_exc: Exception | None = None
+    last_response: requests.Response | None = None
     for attempt in range(1, attempts + 1):
         try:
-            r = requests.request(method, url, **kwargs)
+            with requests.Session() as session:
+                session.trust_env = use_proxy_settings
+                r = session.request(method, url, **kwargs)
             if r.status_code < 500:
                 return r
             last_response = r
